@@ -105,8 +105,8 @@ public class TiberoDialect extends Dialect {
     }
 
     protected void registerCharacterTypeMappings() {
-        registerColumnType(1, "char(1)");
-        registerColumnType(12, 4000L, "varchar2($l)");
+        registerColumnType(1, "char(1 char)");
+        registerColumnType(12, 4000L, "varchar2($l char)");
         registerColumnType(12, "long");
         registerColumnType(-9, "nvarchar2($l)");
         registerColumnType(-16, "nvarchar2($l)");
