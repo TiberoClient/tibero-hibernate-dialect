@@ -1,0 +1,48 @@
+plugins {
+    id 'java'
+}
+
+group = 'com.tmax.tibero'
+version = '1.0-SNAPSHOT'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+repositories {
+    mavenCentral()
+}
+
+// 소스 폴더 구조 설정 (현재 구조에 맞게)
+sourceSets {
+    main {
+        java {
+            srcDirs = ['src']
+        }
+    }
+    test {
+        java {
+            srcDirs = ['test']
+        }
+        resources {
+            srcDirs = ['test/resources']
+        }
+    }
+}
+
+tasks.test {
+    exclude '**/AbstractTiberoDialectTestBase.class'
+}
+
+dependencies {
+    // Hibernate
+    implementation 'org.hibernate.orm:hibernate-core:6.6.39.Final'
+
+    // Tibero JDBC 드라이버 (로컬 JAR)
+    implementation files('/home/junhyoung_kim4/workspace/tibero/7/fs02_dev/client/lib/jar/tibero7-jdbc.jar')
+
+    // 테스트
+    testImplementation 'org.hibernate.orm:hibernate-testing:6.6.39.Final'
+    testImplementation 'junit:junit:4.13.2'
+}
