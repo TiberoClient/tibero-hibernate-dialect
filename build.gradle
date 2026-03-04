@@ -39,8 +39,8 @@ dependencies {
     // Hibernate
     implementation 'org.hibernate.orm:hibernate-core:6.6.39.Final'
 
-    // Tibero JDBC 드라이버 (로컬 JAR)
-    implementation files('/home/junhyoung_kim4/workspace/tibero/7/fs02_dev/client/lib/jar/tibero7-jdbc.jar')
+    // Tibero JDBC 드라이버 (로컬 JAR) - 아래에 Tibero JDBC JAR 파일의 절대 경로를 입력하세요.
+    implementation files('Tibero_JDBC_JAR_절대경로')
 
     // 테스트
     testImplementation 'org.hibernate.orm:hibernate-testing:6.6.39.Final'
