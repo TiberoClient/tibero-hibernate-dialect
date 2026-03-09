@@ -5,7 +5,7 @@ Spring Boot JPA, Spring Data JPA 등에서 Tibero를 데이터베이스로 사�
 
 ---
 
-**사용법, dependency 설정(Gradle/Maven), 버전별 설명 등 자세한 내용은 아래 문서를 참고하세요.**
+**사용법, dependency 설정(Gradle/Maven), 버전별 설명 등 자세한 내용은 아래 문서를 참고하면 됩니다.**
 
 👉 **[Tibero Hibernate Dialect]()** 👈
 
@@ -13,4 +13,4 @@ Spring Boot JPA, Spring Data JPA 등에서 Tibero를 데이터베이스로 사�
 
 ## 라이선스
 
-LGPL 2.1. 프로젝트 루트의 `lgpl.txt`를 참고하세요.
+LGPL 2.1. 프로젝트 루트의 `lgpl.txt`를 참고하면 됩니다.
