@@ -1,0 +1,4 @@
+# hibernate.dialect 를 지정하지 않아도 JDBC 메타데이터로 Tibero 를 알아내게 한다.
+# 이 파일이 jar 에 안 들어가면 자동 인식이 통째로 죽는다 —
+# build.gradle 의 sourceSets.main.resources.srcDirs 선언이 그래서 필요하다.
+com.tmax.tibero.hibernate.dialect.TiberoDialectResolver

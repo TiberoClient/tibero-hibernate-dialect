@@ -1,0 +1,2 @@
+# hibernate.dialect=Tibero 같은 짧은 이름을 허용한다.
+com.tmax.tibero.hibernate.dialect.TiberoDialectSelector
