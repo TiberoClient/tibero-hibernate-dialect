@@ -462,6 +462,17 @@ public class TiberoDialect extends Dialect {
         return Types.BIT;
     }
 
+    @Override
+    public SqlAstTranslatorFactory getSqlAstTranslatorFactory() {
+        return new StandardSqlAstTranslatorFactory() {
+            @Override
+            protected <T extends JdbcOperation> SqlAstTranslator<T> buildTranslator(
+                    SessionFactoryImplementor sessionFactory, Statement statement) {
+                return new TiberoSqlAstTranslator<>(sessionFactory, statement);
+            }
+        };
+    }
+
 
     @Override
     public String rowId(String rowId) {
@@ -576,6 +587,30 @@ public class TiberoDialect extends Dialect {
     @Override
     public String getAddColumnString() {
         return "add";
+    }
+
+    @Override
+    public boolean supportsValuesList() {
+        return false;
+    }
+
+    @Override
+    public SelectItemReferenceStrategy getGroupBySelectItemReferenceStrategy() {
+        return SelectItemReferenceStrategy.EXPRESSION;
+    }
+
+    @Override
+    public MutationOperation createOptionalTableUpdateOperation(
+            EntityMutationTarget mutationTarget,
+            OptionalTableUpdate optionalTableUpdate,
+            SessionFactoryImplementor factory) {
+        final TiberoSqlAstTranslator<?> translator = new TiberoSqlAstTranslator<>(factory, optionalTableUpdate);
+        return translator.createMergeOperation(optionalTableUpdate);
+    }
+
+    @Override
+    public DmlTargetColumnQualifierSupport getDmlTargetColumnQualifierSupport() {
+        return DmlTargetColumnQualifierSupport.TABLE_ALIAS;
     }
 
     @Override
@@ -1004,6 +1039,49 @@ public class TiberoDialect extends Dialect {
     @Override
     public boolean supportsPartitionBy() {
         return true;
+    }
+
+    @Override
+    public boolean supportsWindowFunctions() {
+        return true;
+    }
+
+    @Override
+    public boolean supportsFetchClause(FetchClauseType type) {
+        // ROWS ONLY 실측 OK. WITH TIES / PERCENT 는 미구현
+        return type == FetchClauseType.ROWS_ONLY;
+    }
+
+    @Override
+    public boolean supportsOffsetInSubquery() {
+        return true;
+    }
+
+    @Override
+    public boolean supportsRecursiveCTE() {
+        return true;
+    }
+
+    @Override
+    public boolean supportsLateral() {
+        // LATERAL / CROSS APPLY 실측 실패 → 정직하게 off
+        return false;
+    }
+
+    @Override
+    public boolean supportsInsertReturningGeneratedKeys() {
+        return true;
+    }
+
+    @Override
+    public boolean supportsFromClauseInUpdate() {
+        // raw UPDATE..FROM 은 실패하지만 translator가 inline-view로 에뮬레이션
+        return true;
+    }
+
+    @Override
+    public RowLockStrategy getWriteRowLockStrategy() {
+        return RowLockStrategy.COLUMN;
     }
 
     /**
