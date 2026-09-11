@@ -8,6 +8,7 @@ import static org.hibernate.type.SqlTypes.*;
 import java.sql.CallableStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Types;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Matcher;
@@ -17,12 +18,44 @@ import com.tmax.tibero.hibernate.dialect.identity.TiberoIdentityColumnSupport;
 import com.tmax.tibero.hibernate.dialect.pagination.TiberoLimitHandler;
 import com.tmax.tibero.hibernate.dialect.sequence.TiberoSequenceSupport;
 import com.tmax.tibero.hibernate.tool.schema.extract.internal.SequenceInformationExtractorTiberoDatabaseImpl;
+import com.tmax.tibero.hibernate.type.TiberoBinaryDoubleJdbcType;
+import com.tmax.tibero.hibernate.type.TiberoBinaryFloatJdbcType;
+import com.tmax.tibero.hibernate.type.TiberoJsonBlobJdbcType;
+import org.hibernate.mapping.UserDefinedType;
+import org.hibernate.tool.schema.spi.Exporter;
+import org.hibernate.type.SqlTypes;
+import org.hibernate.type.descriptor.sql.internal.ArrayDdlTypeImpl;
+import org.hibernate.type.descriptor.sql.spi.DdlTypeRegistry;
+import org.hibernate.dialect.aggregate.AggregateSupport;
+import jakarta.persistence.TemporalType;
 import org.hibernate.LockOptions;
 import org.hibernate.QueryTimeoutException;
 import org.hibernate.boot.model.FunctionContributions;
 import org.hibernate.boot.model.TypeContributions;
+import org.hibernate.dialect.BooleanDecoder;
 import org.hibernate.dialect.DatabaseVersion;
 import org.hibernate.dialect.Dialect;
+import org.hibernate.dialect.DmlTargetColumnQualifierSupport;
+import org.hibernate.dialect.OracleBooleanJdbcType;
+import org.hibernate.dialect.OracleDialect;
+import org.hibernate.dialect.RowLockStrategy;
+import org.hibernate.dialect.SelectItemReferenceStrategy;
+import org.hibernate.dialect.TimeZoneSupport;
+import org.hibernate.dialect.unique.CreateTableUniqueDelegate;
+import org.hibernate.dialect.unique.UniqueDelegate;
+import org.hibernate.engine.jdbc.env.spi.IdentifierHelper;
+import org.hibernate.engine.jdbc.env.spi.IdentifierHelperBuilder;
+import org.hibernate.persister.entity.mutation.EntityMutationTarget;
+import org.hibernate.sql.ast.spi.SqlAppender;
+import org.hibernate.sql.model.MutationOperation;
+import org.hibernate.sql.model.internal.OptionalTableUpdate;
+import org.hibernate.type.descriptor.java.PrimitiveByteArrayJavaType;
+import java.sql.DatabaseMetaData;
+import java.time.temporal.ChronoField;
+import static org.hibernate.type.descriptor.DateTimeUtils.appendAsTimestampWithNanos;
+import org.hibernate.dialect.function.CommonFunctionFactory;
+import org.hibernate.dialect.function.ModeStatsModeEmulation;
+import org.hibernate.dialect.function.OracleTruncFunction;
 import org.hibernate.dialect.function.StandardSQLFunction;
 import org.hibernate.dialect.identity.IdentityColumnSupport;
 import org.hibernate.dialect.pagination.LimitHandler;
@@ -30,6 +63,24 @@ import org.hibernate.dialect.sequence.SequenceSupport;
 import org.hibernate.dialect.temptable.TemporaryTable;
 import org.hibernate.dialect.temptable.TemporaryTableKind;
 import org.hibernate.engine.jdbc.dialect.spi.DialectResolutionInfo;
+import org.hibernate.engine.spi.SessionFactoryImplementor;
+import org.hibernate.query.SemanticException;
+import org.hibernate.query.sqm.FetchClauseType;
+import org.hibernate.query.sqm.IntervalType;
+import org.hibernate.query.sqm.TemporalUnit;
+import org.hibernate.sql.ast.SqlAstTranslator;
+import org.hibernate.sql.ast.SqlAstTranslatorFactory;
+import org.hibernate.sql.ast.spi.StandardSqlAstTranslatorFactory;
+import org.hibernate.sql.ast.tree.Statement;
+import org.hibernate.sql.exec.spi.JdbcOperation;
+import org.hibernate.type.descriptor.jdbc.OracleJsonBlobJdbcType;
+import static org.hibernate.query.sqm.TemporalUnit.DAY;
+import static org.hibernate.query.sqm.TemporalUnit.HOUR;
+import static org.hibernate.query.sqm.TemporalUnit.MINUTE;
+import static org.hibernate.query.sqm.TemporalUnit.MONTH;
+import static org.hibernate.query.sqm.TemporalUnit.SECOND;
+import static org.hibernate.query.sqm.TemporalUnit.YEAR;
+import org.hibernate.query.sqm.CastType;
 import org.hibernate.exception.ConstraintViolationException;
 import org.hibernate.exception.LockAcquisitionException;
 import org.hibernate.exception.LockTimeoutException;
@@ -50,7 +101,6 @@ import org.hibernate.query.sqm.mutation.spi.SqmMultiTableInsertStrategy;
 import org.hibernate.query.sqm.mutation.spi.SqmMultiTableMutationStrategy;
 import org.hibernate.query.sqm.produce.function.FunctionParameterType;
 import org.hibernate.query.sqm.produce.function.StandardFunctionArgumentTypeResolvers;
-import org.hibernate.query.sqm.produce.function.StandardFunctionReturnTypeResolvers;
 import org.hibernate.service.ServiceRegistry;
 import org.hibernate.tool.schema.extract.spi.SequenceInformationExtractor;
 import org.hibernate.type.BasicTypeRegistry;
@@ -62,7 +112,17 @@ import org.hibernate.type.descriptor.jdbc.spi.JdbcTypeRegistry;
 import org.hibernate.type.descriptor.sql.internal.DdlTypeImpl;
 import org.hibernate.type.descriptor.sql.spi.DdlTypeRegistry;
 import org.hibernate.type.spi.TypeConfiguration;
+import org.hibernate.query.sqm.produce.function.StandardFunctionReturnTypeResolvers;
 
+/**
+ * Tibero Hibernate Dialect (Hibernate 6.6).
+ *
+ * <p>Oracle Dialect 대비 의도적으로 오버라이드하지 않은 API
+ * (미지원 / 미구현 / 기본값 적합) 판단은
+ * {@code docs/dialect-decisions.md} 및
+ * {@code DialectDecisionContractTest} / {@code DialectDecisionCapabilityTest} 를 본다.
+ * diff만 보고 오버라이드를 추가하지 말 것.
+ */
 public class TiberoDialect extends Dialect {
     private static final Pattern DISTINCT_KEYWORD_PATTERN = Pattern.compile("\\bdistinct\\b", CASE_INSENSITIVE);
     private static final Pattern GROUP_BY_KEYWORD_PATTERN = Pattern.compile("\\bgroup\\s+by\\b", CASE_INSENSITIVE);
@@ -266,7 +326,17 @@ public class TiberoDialect extends Dialect {
 
     @Override
     public int getMaxVarbinaryLength() {
+        // Tibero RAW 최대 길이 실측 (localhost:8888): 2000
         return 2000;
+    }
+
+    /**
+     * NVARCHAR2는 VARCHAR2와 상한이 다름 (실측: 32766 OK / 32767 FAIL).
+     * 기본 구현은 getMaxVarcharLength()를 그대로 쓰므로 반드시 분리해야 함
+     */
+    @Override
+    public int getMaxNVarcharLength() {
+        return 32766;
     }
 
 
@@ -323,6 +393,24 @@ public class TiberoDialect extends Dialect {
 
         final DdlTypeRegistry ddlTypeRegistry = typeContributions.getTypeConfiguration().getDdlTypeRegistry();
 
+        /*
+         * Tibero의 float(p)는 이진 정밀도가 아니라 NUMBER로 저장된다.
+         * float(53) -> NUMBER(15) 가 되어 IEEE double이 15자리로 잘리고(3.141592653589793 -> 3.14159265358979),
+         * Double.MAX_VALUE는 아예 overflow로 거부된다.
+         * 또 cast(x as float(53))은 NUMBER 정밀도 상한(38)을 넘어 JDBC-5077로 실패한다.
+         *
+         * Hibernate는 Float/Double을 모두 FLOAT DDL 코드로 보내고 precision으로만 구분하므로
+         * (DoubleJdbcType.getDdlTypeCode() == FLOAT) precision을 보고 Tibero의 IEEE 타입에 매핑한다.
+         */
+        ddlTypeRegistry.addDescriptor( new DdlTypeImpl( FLOAT, "binary_double", null, "binary_double", this ) {
+            @Override
+            public String getTypeName(Long size, Integer precision, Integer scale) {
+                return precision != null && precision <= getFloatPrecision()
+                        ? "binary_float"
+                        : "binary_double";
+            }
+        } );
+
         // xmltype
         ddlTypeRegistry.addDescriptor( new DdlTypeImpl( SQLXML, "xmltype", this ) );
 
@@ -336,6 +424,42 @@ public class TiberoDialect extends Dialect {
         ddlTypeRegistry.addDescriptor( new DdlTypeImpl( INTERVAL_SECOND, "interval day to second", this ) );
 
         // TODO interval year to month, interval (not in SqlTypes)
+    }
+
+    @Override
+    public void contributeTypes(TypeContributions typeContributions, ServiceRegistry serviceRegistry) {
+        super.contributeTypes(typeContributions, serviceRegistry);
+        // number(1,0) boolean + check (0,1)
+        typeContributions.contributeJdbcType(OracleBooleanJdbcType.INSTANCE);
+        // JSON을 BLOB 바인딩으로 다루는 경로 (resolveSqlTypeDescriptor의 json/BLOB과 정합).
+        // Oracle 구현을 그대로 쓰면 Tibero가 지원하지 않는 check (col is json) 이 딸려와
+        // JSON 컬럼 엔티티의 create table 이 실패하므로 전용 서브클래스를 쓴다.
+        typeContributions.contributeJdbcType(TiberoJsonBlobJdbcType.INSTANCE);
+
+        // 표준 setDouble/setFloat은 binary_double/binary_float 컬럼에도 NUMBER로 바인딩되어
+        // IEEE 극값이 거부되고 큰 지수에서 왕복 오차가 생긴다. 드라이버 확장 API로 바인딩한다.
+        typeContributions.contributeJdbcType(TiberoBinaryDoubleJdbcType.INSTANCE);
+        typeContributions.contributeJdbcType(TiberoBinaryFloatJdbcType.FLOAT_INSTANCE);
+        typeContributions.contributeJdbcType(TiberoBinaryFloatJdbcType.REAL_INSTANCE);
+
+        // @Struct 임베더블을 object UDT 컬럼에 담는 경로. Hibernate 의 드라이버 중립 구현으로도
+        // 대부분 동작하지만 null 바인딩과 중첩 struct 두 곳에서 tbjdbc 가 표준과 다르게 군다.
+
+        // 배열 필드를 VARRAY 컬럼에 담는 경로.
+        // 기본 Dialect 는 supportsStandardArrays() 가 true 일 때만 아래 둘을 등록한다.
+        // Tibero 는 ANSI array DDL(`c number array`)을 받지 않으므로 그 플래그는 false 이고,
+        // 대신 Oracle 식 VARRAY UDT 로 지원한다 — Oracle 도 같은 이유로 직접 등록한다.
+        //
+        // Oracle 은 여기서 SqlTypes.TABLE 용 DdlType 도 함께 등록하지만 우리는 하지 않는다 —
+        // 그 코드가 도달하려면 nested table(`as table of`) JdbcType 을 만드는 생성자가 필요한데
+        // (Oracle 의 OracleNestedTableJdbcTypeConstructor) 우리는 VARRAY 만 지원한다.
+        // nested table 을 지원하게 되면 그 생성자와 함께 이 등록도 되살릴 것.
+        final DdlTypeRegistry ddlTypeRegistry = typeContributions.getTypeConfiguration().getDdlTypeRegistry();
+    }
+
+    @Override
+    public int getPreferredSqlTypeCodeForBoolean() {
+        return Types.BIT;
     }
 
 
@@ -397,6 +521,7 @@ public class TiberoDialect extends Dialect {
                         return jdbcTypeRegistry.getDescriptor(JSON);
                     }
                 }
+                break;
             case OTHER :
                 if (columnTypeName != null) {
                     final String typeName = columnTypeName.toLowerCase(Locale.ROOT);
@@ -452,6 +577,14 @@ public class TiberoDialect extends Dialect {
     public String getAddColumnString() {
         return "add";
     }
+
+    @Override
+    public void appendBinaryLiteral(SqlAppender appender, byte[] bytes) {
+        appender.appendSql("hextoraw('");
+        PrimitiveByteArrayJavaType.INSTANCE.appendString(appender, bytes);
+        appender.appendSql("')");
+    }
+
 
     /**
      * sequence 관련
