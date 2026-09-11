@@ -1,3 +1,6 @@
+package integration;
+
+import support.AbstractTiberoDialectTestBase;
 import com.tmax.tibero.hibernate.dialect.TiberoDialect;
 import org.hibernate.dialect.Dialect;
 import org.hibernate.engine.jdbc.spi.JdbcServices;

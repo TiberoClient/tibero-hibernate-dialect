@@ -1,3 +1,6 @@
+package capability;
+
+import support.AbstractTiberoDialectTestBase;
 import org.hibernate.LockOptions;
 import org.hibernate.dialect.Dialect;
 import org.hibernate.engine.spi.SessionFactoryImplementor;
@@ -120,7 +123,6 @@ public class LockTest extends AbstractTiberoDialectTestBase {
                         fail("Expected NOWAIT lock acquisition to fail, but it succeeded.");
                     } catch (Exception e) {
                         // expected
-                        System.out.println("[Expected failure] NOWAIT lock acquisition failed: " + e.getMessage());
                     } finally {
                         safeRollback(session2);
                     }

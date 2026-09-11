@@ -1,3 +1,5 @@
+package contract;
+
 import com.tmax.tibero.hibernate.dialect.TiberoDialect;
 import org.hibernate.query.spi.QueryOptions;
 import org.hibernate.query.spi.Limit;

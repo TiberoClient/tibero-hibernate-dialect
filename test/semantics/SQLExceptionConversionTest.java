@@ -1,3 +1,6 @@
+package semantics;
+
+import support.AbstractTiberoDialectTestBase;
 import org.hibernate.QueryTimeoutException;
 import org.hibernate.cfg.Configuration;
 import org.hibernate.dialect.Dialect;
@@ -77,7 +80,6 @@ public class SQLExceptionConversionTest extends AbstractTiberoDialectTestBase {
                         LockTimeoutException lte = findCause(e, LockTimeoutException.class);
                         assertNotNull("Expected LockTimeoutException for NOWAIT error", lte);
 
-                        System.out.println("[Expected] NOWAIT converted to LockTimeoutException: " + lte.getMessage());
                     } finally {
                         safeRollback(session2);
                     }
@@ -130,7 +132,6 @@ public class SQLExceptionConversionTest extends AbstractTiberoDialectTestBase {
                         LockTimeoutException lte = findCause(e, LockTimeoutException.class);
                         assertNotNull("Expected LockTimeoutException for WAIT timeout", lte);
 
-                        System.out.println("[Expected] WAIT timeout converted to LockTimeoutException: " + lte.getMessage());
                     } finally {
                         safeRollback(session2);
                     }
@@ -225,8 +226,6 @@ public class SQLExceptionConversionTest extends AbstractTiberoDialectTestBase {
             LockAcquisitionException lae = findCause(deadlockEx, LockAcquisitionException.class);
             assertNotNull("Expected deadlock to be converted to LockAcquisitionException", lae);
 
-            System.out.println("[Expected] Deadlock converted to LockAcquisitionException: " + lae.getMessage());
-
         } catch (InterruptedException ie) {
             throw new RuntimeException(ie);
         } finally {
@@ -258,7 +257,6 @@ public class SQLExceptionConversionTest extends AbstractTiberoDialectTestBase {
             QueryTimeoutException qte = findCause(e, QueryTimeoutException.class);
             assertNotNull("Expected QueryTimeoutException for statement cancel/timeout", qte);
 
-            System.out.println("[Expected] Statement canceled/timeout converted to QueryTimeoutException: " + qte.getMessage());
         }
     }
 

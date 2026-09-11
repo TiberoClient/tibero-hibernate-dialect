@@ -1,3 +1,5 @@
+package contract;
+
 import com.tmax.tibero.hibernate.dialect.TiberoDialect;
 import org.junit.Test;
 

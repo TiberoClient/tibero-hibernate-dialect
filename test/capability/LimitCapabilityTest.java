@@ -1,3 +1,6 @@
+package capability;
+
+import support.AbstractTiberoDialectTestBase;
 import org.hibernate.cfg.Configuration;
 import org.hibernate.dialect.Dialect;
 import org.hibernate.engine.spi.SessionFactoryImplementor;
@@ -14,11 +17,10 @@ import static org.junit.Assert.*;
  *  2) 일부 값은 실제 Tibero DB에서 동작(제약)하는지 실제 SQL로 capability 검증
  *
  * 검증 대상:
- *  - getMaxVarcharLength() = 4000  (DB insert로 검증)
- *  - getMaxVarbinaryLength() = 2000 (DB insert로 검증)
- *  - getInExpressionCountLimit() = 1000 (DB query로 검증)
- *  - getMaxIdentifierLength() = 30 (contract-only)
- *  - getMaxAliasLength() = 20 (contract-only)
+ *  - getMaxVarcharLength() = 65532  (DB DDL로 검증)
+ *  - getMaxVarbinaryLength() = 2000 (DB DDL로 검증, RAW)
+ *  - getMaxIdentifierLength() = 128 (DB DDL로 검증)
+ *  - getMaxAliasLength() = 118 (contract-only)
  */
 public class LimitCapabilityTest extends AbstractTiberoDialectTestBase {
 
@@ -56,7 +58,6 @@ public class LimitCapabilityTest extends AbstractTiberoDialectTestBase {
         assertEquals(118, dialect.getMaxAliasLength());
     }
 
-
     // ------------------------------------------------------------------------
     // 2) DB Capability 검증 - max varchar length (65532)
     // ------------------------------------------------------------------------
@@ -90,7 +91,6 @@ public class LimitCapabilityTest extends AbstractTiberoDialectTestBase {
                 fail("Expected varchar2(" + (max + 1) + ") to fail, but it succeeded.");
             } catch (Exception e) {
                 // expected
-                System.out.println("[Expected failure] VARCHAR length exceeded: " + e.getMessage());
             }
 
         } finally {
@@ -99,9 +99,8 @@ public class LimitCapabilityTest extends AbstractTiberoDialectTestBase {
         }
     }
 
-
     // ------------------------------------------------------------------------
-    // 3) DB Capability 검증 - max varbinary length (2000) (VARBINARY(2000) -> RAW(2000)로 매핑 가정)
+    // 3) DB Capability 검증 - max varbinary length (2000) (VARBINARY -> RAW 매핑)
     // ------------------------------------------------------------------------
 
     @Test
@@ -131,7 +130,6 @@ public class LimitCapabilityTest extends AbstractTiberoDialectTestBase {
                 fail("Expected raw(" + (max + 1) + ") to fail, but it succeeded.");
             } catch (Exception e) {
                 // expected
-                System.out.println("[Expected failure] VARBINARY length exceeded: " + e.getMessage());
             }
 
         } finally {
@@ -139,7 +137,6 @@ public class LimitCapabilityTest extends AbstractTiberoDialectTestBase {
             try { dropTableWithRetry(tableFail); } catch (Exception ignored) {}
         }
     }
-
 
     // ------------------------------------------------------------------------
     // 4) DB Capability 검증 - max identifier length (128)
@@ -172,7 +169,6 @@ public class LimitCapabilityTest extends AbstractTiberoDialectTestBase {
                 fail("Expected identifier with length 129 to fail, but it succeeded.");
             } catch (Exception e) {
                 // expected
-                System.out.println("[Expected failure] identifier length exceeded: " + e.getMessage());
             }
 
         } finally {

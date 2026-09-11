@@ -1,3 +1,6 @@
+package capability;
+
+import support.AbstractTiberoDialectTestBase;
 import org.hibernate.dialect.Dialect;
 import org.hibernate.engine.spi.SessionFactoryImplementor;
 import org.junit.Before;
@@ -56,7 +59,6 @@ public class DBCapabilityTest extends AbstractTiberoDialectTestBase {
                 fail("Expected Tibero to NOT support COUNT(DISTINCT (a,b)) syntax, but query succeeded.");
             } catch (Exception e) {
                 // expected: parse error like "Missing right parenthesis"
-                System.out.println("[Expected failure] Tuple DISTINCT count not supported: " + e.getMessage());
             }
         });
     }
@@ -80,7 +82,6 @@ public class DBCapabilityTest extends AbstractTiberoDialectTestBase {
 
                 fail("Expected Tibero to NOT support EXISTS(...) directly in SELECT, but query succeeded.");
             } catch (Exception e) {
-                System.out.println("[Expected failure] EXISTS in SELECT not supported: " + e.getMessage());
             }
         });
     }
@@ -186,10 +187,8 @@ public class DBCapabilityTest extends AbstractTiberoDialectTestBase {
                 session.createNativeMutationQuery("create schema SOME_SCHEMA").executeUpdate();
                 fail("Expected create schema to fail in Tibero (schema=user concept), but it succeeded.");
             } catch (Exception e) {
-                System.out.println("[Expected failure] CREATE SCHEMA failed: " + e.getMessage());
             }
         });
     }
-
 
 }

@@ -1,3 +1,5 @@
+package support;
+
 import org.hibernate.resource.jdbc.spi.StatementInspector;
 
 import java.util.ArrayList;

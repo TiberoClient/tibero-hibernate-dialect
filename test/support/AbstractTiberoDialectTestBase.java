@@ -1,3 +1,5 @@
+package support;
+
 import org.hibernate.Session;
 import org.hibernate.testing.junit4.BaseCoreFunctionalTestCase;
 
@@ -50,14 +52,10 @@ public class AbstractTiberoDialectTestBase extends BaseCoreFunctionalTestCase {
                 inTransaction(session -> {
                     session.createNativeMutationQuery("drop table " + table).executeUpdate();
                 });
-//                System.out.println("[Cleanup] Dropped table: " + table);
                 return;
             } catch (Exception e) {
-//                System.out.println("[WARN] Drop table failed (" + i + "/" + maxRetry + "): " + table);
-//                System.out.println("       reason: " + e.getMessage());
 
                 if (i == maxRetry) {
-//                    System.out.println("[ERROR] Drop table finally failed: " + table);
                     return;
                 }
 

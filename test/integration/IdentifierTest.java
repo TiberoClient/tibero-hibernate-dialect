@@ -1,3 +1,6 @@
+package integration;
+
+import support.SqlCaptureInspector;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -91,10 +94,6 @@ public class IdentifierTest extends BaseCoreFunctionalTestCase {
 
             assertNotNull(entity.getId());
         });
-
-        // debug dump (실패 시 원인 확인에 도움)
-        System.out.println("==== Captured SQLs ====");
-        SqlCaptureInspector.getSqls().forEach(sql -> System.out.println("[SQL] " + sql));
 
         boolean usesSequenceNextval =
                 SqlCaptureInspector.getSqls().stream()

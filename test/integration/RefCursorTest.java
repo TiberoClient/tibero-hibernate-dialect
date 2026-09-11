@@ -1,3 +1,6 @@
+package integration;
+
+import support.AbstractTiberoDialectTestBase;
 import com.tmax.tibero.hibernate.dialect.TiberoTypes;
 import org.hibernate.cfg.Configuration;
 import org.hibernate.dialect.Dialect;

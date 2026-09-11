@@ -1,3 +1,6 @@
+package capability;
+
+import support.AbstractTiberoDialectTestBase;
 import org.hibernate.Session;
 import org.hibernate.cfg.Configuration;
 import org.hibernate.dialect.Dialect;
@@ -74,8 +77,6 @@ public class GuidTest extends AbstractTiberoDialectTestBase {
 
         assertNotEquals("Two GUID results should be different", guid1, guid2);
 
-        System.out.println("GUID1=" + guid1);
-        System.out.println("GUID2=" + guid2);
     }
 }
 

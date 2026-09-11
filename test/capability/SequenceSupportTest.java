@@ -1,3 +1,6 @@
+package capability;
+
+import support.AbstractTiberoDialectTestBase;
 import com.tmax.tibero.hibernate.dialect.sequence.TiberoSequenceSupport;
 import org.hibernate.cfg.Configuration;
 import org.hibernate.dialect.Dialect;

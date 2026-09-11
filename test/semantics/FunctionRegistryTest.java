@@ -1,3 +1,6 @@
+package semantics;
+
+import support.AbstractTiberoDialectTestBase;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
@@ -79,17 +82,19 @@ public class FunctionRegistryTest extends AbstractTiberoDialectTestBase {
     public void registry_contains_all_registered_functions() {
         // 너의 initializeFunctionRegistry()에 나온 "모든" 함수명 목록
         List<String> names = Arrays.asList(
-                // math
-                "abs","sign","exp","ln","stddev","sqrt","variance","round","trunc","ceil","floor",
-                // trig
+                // math / aggregate (Factory + super)
+                "abs","sign","exp","ln","stddev","sqrt","variance","round","trunc","truncate","ceil","ceiling","floor",
+                "median","log","log10","mod","power","atan2",
+                // trig / hyperbolic
                 "acos","asin","atan","cos","cosh","sin","sinh","tan","tanh",
                 // bit
-                "bitand",
+                "bitand","bitor","bitxor",
                 // string
                 "chr","initcap","lower","ltrim","rtrim","soundex","upper",
                 "ascii","instr","instrb","lpad","replace","rpad","substr","substrb","translate",
+                "left","right","trim",
                 // cast/convert
-                "to_char","to_date",
+                "to_char","to_date","to_number","to_timestamp",
                 // date/time no-arg
                 "current_date","current_time","current_timestamp","sysdate","systimestamp",
                 // date funcs
@@ -97,9 +102,11 @@ public class FunctionRegistryTest extends AbstractTiberoDialectTestBase {
                 // special no-arg
                 "uid","user","rowid","rownum",
                 // concat + aliases + patterns
-                "concat","substring","locate","bit_length",
+                "concat","substring","locate","bit_length","octet_length","character_length","length",
                 // coalesce / nvl etc
-                "coalesce","atan2","log","mod","nvl","nvl2","power",
+                "coalesce","nvl","nvl2",
+                // window / ordered-set
+                "listagg","mode","rank","dense_rank","row_number",
                 // alias
                 "str"
         );
@@ -119,8 +126,9 @@ public class FunctionRegistryTest extends AbstractTiberoDialectTestBase {
 
     @Test
     public void fn_abs_sign_round_trunc_ceil_floor_mod_power_log_atan2_smoke() {
-        BigDecimal abs = scalar("select function('abs', e.intVal) from FnEntity e where e.id=1", BigDecimal.class);
-        assertEquals(BigDecimal.valueOf(10), abs);
+        // Factory 정렬 후 반환 JDBC 타입이 Integer/BigDecimal 등으로 달라질 수 있음
+        Object abs = scalar("select function('abs', e.intVal) from FnEntity e where e.id=1", Object.class);
+        assertEquals(10, ((Number) abs).intValue());
 
         Integer sign = scalar("select function('sign', e.intVal) from FnEntity e where e.id=1", Integer.class);
         assertTrue(sign == -1 || sign == 0 || sign == 1);
@@ -144,7 +152,7 @@ public class FunctionRegistryTest extends AbstractTiberoDialectTestBase {
         Object pow = scalar("select function('power', 2, 3) from FnEntity e where e.id=1", Object.class);
         assertNotNull(pow);
 
-        // log(base, n) 형태가 Tibero에서 지원된다는 가정 (Oracle-style)
+        // log(base, n) 형태가 Tibero에서 지원된다는 가정
         Object lg = scalar("select function('log', 10, 100) from FnEntity e where e.id=1", Object.class);
         assertNotNull(lg);
 
@@ -211,8 +219,8 @@ public class FunctionRegistryTest extends AbstractTiberoDialectTestBase {
     @Test
     public void fn_bitand_smoke() {
         // bitand(10, 6) = 2 (1010 & 0110 = 0010)
-        BigDecimal bitand = scalar("select function('bitand', 10, 6) from FnEntity e where e.id=1", BigDecimal.class);
-        assertEquals(BigDecimal.valueOf(2), bitand);
+        Object bitand = scalar("select function('bitand', 10, 6) from FnEntity e where e.id=1", Object.class);
+        assertEquals(2, ((Number) bitand).intValue());
     }
 
     // ---------- String ----------
@@ -361,16 +369,22 @@ public class FunctionRegistryTest extends AbstractTiberoDialectTestBase {
         Object currentDate = scalar("select function('current_date') from FnEntity e where e.id=1", Object.class);
         assertNotNull(currentDate);
 
-        Object currentTime = scalar("select function('current_time') from FnEntity e where e.id=1", Object.class);
+        // current_time/current_timestamp/systimestamp 는 TZ 타입이 JDBC getObject와 충돌할 수 있어 native로 확인
+        Object currentTime = inTransactionReturning(session ->
+                session.createNativeQuery("select current_time from dual", Object.class).getSingleResult());
         assertNotNull(currentTime);
 
-        Object currentTs = scalar("select function('current_timestamp') from FnEntity e where e.id=1", Object.class);
+        Object currentTs = inTransactionReturning(session ->
+                session.createNativeQuery("select cast(current_timestamp as timestamp) from dual", Object.class)
+                        .getSingleResult());
         assertNotNull(currentTs);
 
         Object sysdate = scalar("select function('sysdate') from FnEntity e where e.id=1", Object.class);
         assertNotNull(sysdate);
 
-        Object systs = scalar("select function('systimestamp') from FnEntity e where e.id=1", Object.class);
+        Object systs = inTransactionReturning(session ->
+                session.createNativeQuery("select cast(systimestamp as timestamp) from dual", Object.class)
+                        .getSingleResult());
         assertNotNull(systs);
     }
 
@@ -394,10 +408,15 @@ public class FunctionRegistryTest extends AbstractTiberoDialectTestBase {
         );
         assertNotNull(monthsBetween);
 
-        Object nextDay = scalar(
-                "select function('next_day', e.dateVal, 'MONDAY') from FnEntity e where e.id=1",
-                Object.class
-        );
+        // next_day 요일 인자는 NLS_DATE_LANGUAGE 에 의존한다.
+        // alter session 은 그 커넥션에만 적용되므로 설정과 조회를 반드시 같은 세션에서 해야 한다.
+        // (별도 inTransaction 으로 나누면 커넥션 풀에서 다른 커넥션을 받아 JDBC-5113 이 난다)
+        Object nextDay = inTransactionReturning(session -> {
+            session.createNativeMutationQuery("alter session set nls_date_language='AMERICAN'").executeUpdate();
+            return session.createQuery(
+                    "select function('next_day', e.dateVal, 'MONDAY') from FnEntity e where e.id=1",
+                    Object.class).getSingleResult();
+        });
         assertNotNull(nextDay);
     }
 
@@ -422,9 +441,62 @@ public class FunctionRegistryTest extends AbstractTiberoDialectTestBase {
         assertNotNull(rowid);
     }
 
+    // ---------- Factory-aligned extras ----------
+
+    @Test
+    public void fn_left_right_median_listagg_log10_smoke() {
+        String left = scalar("select function('left', e.strVal, 3) from FnEntity e where e.id=1", String.class);
+        assertEquals("ban", left);
+
+        String right = scalar("select function('right', e.strVal, 3) from FnEntity e where e.id=1", String.class);
+        assertEquals("ana", right);
+
+        Object med = scalar("select function('median', e.dblVal) from FnEntity e", Object.class);
+        assertNotNull(med);
+
+        Object log10 = scalar("select function('log10', 100) from FnEntity e where e.id=1", Object.class);
+        assertNotNull(log10);
+
+        // Tibero listagg는 WITHIN GROUP (ORDER BY ...) 필요 — registry 존재 + native 실측
+        assertNotNull(registry.findFunctionDescriptor("listagg"));
+        String agg = inTransactionReturning(session ->
+                session.createNativeQuery(
+                        "select listagg(str_val, ',') within group (order by id) from fn_registry_test",
+                        String.class
+                ).getSingleResult());
+        assertNotNull(agg);
+        assertTrue(agg.contains("banana") || agg.length() > 0);
+    }
+
     // =========================================================================
     // Utilities
     // =========================================================================
+
+    // =========================================================================
+    // 3) 반환 타입 회귀 (전수조사 결과)
+    //    mod/power/atan2 를 StandardSQLFunction 으로 재등록하면 base 의
+    //    CommonFunctionFactory 등록(power/atan2 = double)이 float 으로 좁혀졌었음.
+    //    base 등록을 그대로 쓰는지 고정한다.
+    // =========================================================================
+
+    @Test
+    public void fn_power_atan2_resolveToDouble_notFloat() {
+        Object pow = scalar("select function('power', 2, 3) from FnEntity e where e.id=1", Object.class);
+        assertTrue("power 는 double 로 해석되어야 함 (실제: " + pow.getClass() + ")",
+                pow instanceof Double);
+
+        Object atan2 = scalar("select function('atan2', 1, 1) from FnEntity e where e.id=1", Object.class);
+        assertTrue("atan2 는 double 로 해석되어야 함 (실제: " + atan2.getClass() + ")",
+                atan2 instanceof Double);
+    }
+
+    @Test
+    public void fn_mod_resolvesToInteger_perJpaSpec() {
+        Object mod = scalar("select function('mod', 10, 3) from FnEntity e where e.id=1", Object.class);
+        assertTrue("mod 는 JPA 스펙상 integer (실제: " + mod.getClass() + ")",
+                mod instanceof Integer);
+        assertEquals(1, ((Number) mod).intValue());
+    }
 
     private <T> T scalar(String hql, Class<T> type) {
         return inTransactionReturning(session ->

@@ -1,3 +1,6 @@
+package semantics;
+
+import support.AbstractTiberoDialectTestBase;
 import com.tmax.tibero.hibernate.tool.schema.extract.internal.SequenceInformationExtractorTiberoDatabaseImpl;
 
 import org.hibernate.cfg.Configuration;
@@ -122,7 +125,6 @@ public class SequenceInformationExtractorTest extends AbstractTiberoDialectTestB
                 assertTrue("min_value should be <= start value", min.intValue() <= 5);
                 assertTrue("max_value should be >= start value", max.intValue() >= 5);
 
-                System.out.println("min=" + min + ", max=" + max + ", inc=" + inc);
             });
 
         } finally {

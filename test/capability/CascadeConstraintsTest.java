@@ -1,3 +1,6 @@
+package capability;
+
+import support.AbstractTiberoDialectTestBase;
 import org.hibernate.cfg.Configuration;
 import org.hibernate.dialect.Dialect;
 import org.hibernate.engine.spi.SessionFactoryImplementor;
@@ -91,7 +94,6 @@ public class CascadeConstraintsTest extends AbstractTiberoDialectTestBase {
                 );
                 fail("Expected drop table without cascade constraints to fail due to FK reference.");
             } catch (Exception e) {
-                System.out.println("[Expected failure] drop parent without cascade failed: " + e.getMessage());
             }
 
             // ----------------------------------------------------------------

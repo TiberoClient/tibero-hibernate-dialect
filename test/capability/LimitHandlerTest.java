@@ -1,3 +1,6 @@
+package capability;
+
+import support.AbstractTiberoDialectTestBase;
 import com.tmax.tibero.hibernate.dialect.pagination.TiberoLimitHandler;
 
 import org.hibernate.LockOptions;

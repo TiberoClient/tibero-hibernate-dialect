@@ -1,3 +1,6 @@
+package integration;
+
+import support.SqlCaptureInspector;
 import jakarta.persistence.*;
 import org.hibernate.cfg.Configuration;
 import org.hibernate.testing.junit4.BaseCoreFunctionalTestCase;
@@ -46,8 +49,6 @@ public class FallbackSqmStrategyTest extends BaseCoreFunctionalTestCase {
             assertEquals("Child table should be empty", 0L, childCount.longValue());
         });
 
-        // Inspector는 assert하지 않고 출력
-        SqlCaptureInspector.getSqls().forEach(sql -> System.out.println("[SQL] " + sql));
     }
 
     @Test
@@ -68,8 +69,6 @@ public class FallbackSqmStrategyTest extends BaseCoreFunctionalTestCase {
             assertTrue(names.stream().allMatch(n -> "after".equals(n)));
         });
 
-        // Inspector는 assert하지 않고 출력
-        SqlCaptureInspector.getSqls().forEach(sql -> System.out.println("[SQL] " + sql));
     }
 
     // =========================================================================
@@ -119,8 +118,6 @@ public class FallbackSqmStrategyTest extends BaseCoreFunctionalTestCase {
             assertTrue("Inserted rows should exist", childCount > 0);
         });
 
-        // Inspector는 assert하지 않고 출력
-        SqlCaptureInspector.getSqls().forEach(sql -> System.out.println("[SQL] " + sql));
     }
 
     // =========================================================================

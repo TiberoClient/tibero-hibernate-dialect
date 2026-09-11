@@ -1,3 +1,7 @@
+package semantics;
+
+import support.AbstractTiberoDialectTestBase;
+import support.SqlCaptureInspector;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;

@@ -1,3 +1,6 @@
+package semantics;
+
+import support.AbstractTiberoDialectTestBase;
 import org.hibernate.cfg.Configuration;
 import org.hibernate.dialect.Dialect;
 import org.hibernate.engine.spi.SessionFactoryImplementor;
@@ -123,7 +126,6 @@ public class ConstraintNameExtractorTest extends AbstractTiberoDialectTestBase {
 
                 String extracted = extractor.extractConstraintName(sqlException);
 
-                System.out.println("Extracted constraint name = " + extracted);
                 assertNotNull("Extractor should return constraint name for UNIQUE violation", extracted);
 
                 // Tibero가 대문자 normalize 할 수 있으므로 비교는 ignoreCase 권장
@@ -288,9 +290,6 @@ public class ConstraintNameExtractorTest extends AbstractTiberoDialectTestBase {
             dropTableWithRetry(table);
         }
     }
-
-
-
 
     // ------------------------------------------------------------------------
     // Helper

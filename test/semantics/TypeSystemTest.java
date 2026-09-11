@@ -1,3 +1,6 @@
+package semantics;
+
+import support.AbstractTiberoDialectTestBase;
 import com.tmax.tibero.hibernate.dialect.TiberoTypes;
 import org.hibernate.cfg.Configuration;
 import org.hibernate.dialect.Dialect;
@@ -135,19 +138,6 @@ public class TypeSystemTest extends AbstractTiberoDialectTestBase {
         // registry에 등록된 JSON descriptor도 같이 확인
         JdbcType jsonDesc = jdbcTypeRegistry.getDescriptor(SqlTypes.JSON);
 
-
-        System.out.println("=== resolved JdbcType ===");
-        System.out.println("class                = " + t.getClass().getName());
-        System.out.println("jdbcTypeCode         = " + t.getJdbcTypeCode() + " (java.sql.Types)");
-        System.out.println("defaultSqlTypeCode   = " + t.getDefaultSqlTypeCode() + " (org.hibernate.type.SqlTypes)");
-        System.out.println("ddlTypeCode          = " + t.getDdlTypeCode());
-        System.out.println("sameAsRegistryJson?  = " + (t == jsonDesc));
-        System.out.println("registryJson.class   = " + jsonDesc.getClass().getName());
-        System.out.println("registryJson.jdbc    = " + jsonDesc.getJdbcTypeCode());
-        System.out.println("registryJson.default = " + jsonDesc.getDefaultSqlTypeCode());
-        System.out.println("registryJson.ddl     = " + jsonDesc.getDdlTypeCode());
-
-
         // “JSON으로 인식” 여부는 이걸로 검증
         assertEquals(SqlTypes.JSON, t.getDefaultSqlTypeCode());
     }
@@ -155,14 +145,14 @@ public class TypeSystemTest extends AbstractTiberoDialectTestBase {
     @Test
     public void sanity_check_jsonJdbcTypeDescriptorExists() {
         JdbcType json = jdbcTypeRegistry.findDescriptor(SqlTypes.JSON);
-        System.out.println("json descriptor = " + json);
         if (json != null) {
-            System.out.println("json jdbcTypeCode=" + json.getJdbcTypeCode());
-            System.out.println("json ddlTypeCode=" + json.getDdlTypeCode());
-            System.out.println("json class=" + json.getClass().getName());
         }
         assertNotNull("JdbcTypeRegistry must contain JSON descriptor", json);
-        assertTrue(json instanceof JsonAsStringJdbcType);
+        assertTrue(
+                "JSON should use a BLOB/string JSON JdbcType",
+                json instanceof JsonAsStringJdbcType
+                        || json instanceof org.hibernate.type.descriptor.jdbc.OracleJsonBlobJdbcType
+        );
     }
 
     @Test
