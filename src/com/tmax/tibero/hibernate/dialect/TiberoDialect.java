@@ -18,6 +18,7 @@ import com.tmax.tibero.hibernate.dialect.identity.TiberoIdentityColumnSupport;
 import com.tmax.tibero.hibernate.dialect.pagination.TiberoLimitHandler;
 import com.tmax.tibero.hibernate.dialect.sequence.TiberoSequenceSupport;
 import com.tmax.tibero.hibernate.tool.schema.extract.internal.SequenceInformationExtractorTiberoDatabaseImpl;
+import com.tmax.tibero.hibernate.procedure.TiberoCallableStatementSupport;
 import com.tmax.tibero.hibernate.type.TiberoBinaryDoubleJdbcType;
 import com.tmax.tibero.hibernate.type.TiberoBinaryFloatJdbcType;
 import com.tmax.tibero.hibernate.type.TiberoJsonBlobJdbcType;
@@ -116,7 +117,6 @@ import org.hibernate.type.descriptor.jdbc.spi.JdbcTypeRegistry;
 import org.hibernate.type.descriptor.sql.internal.DdlTypeImpl;
 import org.hibernate.type.descriptor.sql.spi.DdlTypeRegistry;
 import org.hibernate.type.spi.TypeConfiguration;
-import org.hibernate.query.sqm.produce.function.StandardFunctionReturnTypeResolvers;
 
 /**
  * Tibero Hibernate Dialect (Hibernate 6.6).
@@ -139,7 +139,23 @@ public class TiberoDialect extends Dialect {
     private static final Pattern SQL_STATEMENT_TYPE_PATTERN =
         Pattern.compile("^(?:/\\*.*?\\*/)?\\s*(select|insert|update|delete)\\s+.*?", CASE_INSENSITIVE);
 
+    // month/quarter/year add. %1$s = 개월 수, %2$s = 대상 값
+    //
+    // add_months 가 월말 클램프를 네이티브로 처리한다 — 1/31 + 1개월 = 2/29.
+    // Hibernate OracleDialect.yqmSelect 는 trunc(x,'MONTH') 로 시작해 일자만 되더하는데,
+    // 그 trunc 때문에 TIMESTAMP 의 시각이 사라진다(2024-03-15 10:20:30 → 04-15 00:00:00).
+    // 다른 dialect(PostgreSQL·MySQL·SQL Server·H2 등)는 모두 DB 네이티브 함수를 써서
+    // 시각을 보존하므로, 여기서는 Oracle 식을 따라가지 않고 시각을 보존한다.
+    private static final String ADD_MONTHS_DATE = "add_months(%2$s,%1$s)";
+    // add_months 는 DATE 를 돌려주므로 소수점 이하 초가 잘린다.
+    // cast 로 TIMESTAMP 를 만든 뒤 잔여 소수부를 다시 더해 복원한다.
+    // (DATE 대상에 쓰면 DATE-DATE 가 interval 이 아니라 숫자가 되어 JDBC-5011 로 깨지므로
+    //  아래 monthsPattern 이 타입별로 갈라 준다)
+    private static final String ADD_MONTHS_TIMESTAMP =
+        "(cast(add_months(%2$s,%1$s) as timestamp) + (%2$s - cast(%2$s as date)))";
+
     private final SequenceSupport tiberoSequenceSupport = TiberoSequenceSupport.getInstance(this);
+    private final UniqueDelegate uniqueDelegate = new CreateTableUniqueDelegate(this);
 
     public TiberoDialect() {
         super(DatabaseVersion.make(7));
@@ -407,150 +423,126 @@ public class TiberoDialect extends Dialect {
     }
 
 
-    // 함수 등록
+    // 함수 등록 — Hibernate 6.6 CommonFunctionFactory 정렬 + Tibero 전용 유지
     @Override
     public void initializeFunctionRegistry(FunctionContributions functionContributions) {
         super.initializeFunctionRegistry(functionContributions);
+        final TypeConfiguration typeConfiguration = functionContributions.getTypeConfiguration();
+        final SqmFunctionRegistry registry = functionContributions.getFunctionRegistry();
+        final BasicTypeRegistry basicTypeRegistry = typeConfiguration.getBasicTypeRegistry();
 
-        SqmFunctionRegistry registry = functionContributions.getFunctionRegistry();
-        TypeConfiguration typeConfig = functionContributions.getTypeConfiguration();
-        BasicTypeRegistry basicTypeRegistry = typeConfig.getBasicTypeRegistry();
+        CommonFunctionFactory functionFactory = new CommonFunctionFactory(functionContributions);
+        functionFactory.ascii();
+        functionFactory.char_chr();
+        functionFactory.cosh();
+        functionFactory.sinh();
+        functionFactory.tanh();
+        functionFactory.log();
+        functionFactory.log10_log();
+        functionFactory.soundex();
+        functionFactory.trim2();
+        functionFactory.initcap();
+        functionFactory.instr();
+        functionFactory.substr();
+        functionFactory.substring_substr();
+        functionFactory.leftRight_substr();
+        functionFactory.translate();
+        functionFactory.bitand();
+        functionFactory.lastDay();
+        functionFactory.toCharNumberDateTimestamp();
+        functionFactory.ceiling_ceil();
+        functionFactory.concat_pipeOperator();
+        functionFactory.rownumRowid();
+        functionFactory.sysdate();
+        functionFactory.systimestamp();
+        functionFactory.addMonths();
+        functionFactory.monthsBetween();
+        functionFactory.everyAny_minMaxCase();
+        functionFactory.repeat_rpad();
 
-        // 수학 함수들
-        registry.register("abs", new StandardSQLFunction("abs"));
-        registry.register("sign", new StandardSQLFunction("sign", StandardBasicTypes.INTEGER));
-        registry.register("exp", new StandardSQLFunction("exp", StandardBasicTypes.DOUBLE));
-        registry.register("ln", new StandardSQLFunction("ln", StandardBasicTypes.DOUBLE));
-        registry.register("stddev", new StandardSQLFunction("stddev", StandardBasicTypes.DOUBLE));
-        registry.register("sqrt", new StandardSQLFunction("sqrt", StandardBasicTypes.DOUBLE));
-        registry.register("variance", new StandardSQLFunction("variance", StandardBasicTypes.DOUBLE));
-        registry.register("round", new StandardSQLFunction("round"));
-        registry.register("trunc", new StandardSQLFunction("trunc"));
-        registry.register("ceil", new StandardSQLFunction("ceil"));
-        registry.register("floor", new StandardSQLFunction("floor"));
+        functionFactory.radians_acos();
+        functionFactory.degrees_acos();
 
-        // 삼각 함수들
-        registry.register("acos", new StandardSQLFunction("acos", StandardBasicTypes.DOUBLE));
-        registry.register("asin", new StandardSQLFunction("asin", StandardBasicTypes.DOUBLE));
-        registry.register("atan", new StandardSQLFunction("atan", StandardBasicTypes.DOUBLE));
-        registry.register("cos", new StandardSQLFunction("cos", StandardBasicTypes.DOUBLE));
-        registry.register("cosh", new StandardSQLFunction("cosh", StandardBasicTypes.DOUBLE));
-        registry.register("sin", new StandardSQLFunction("sin", StandardBasicTypes.DOUBLE));
-        registry.register("sinh", new StandardSQLFunction("sinh", StandardBasicTypes.DOUBLE));
-        registry.register("tan", new StandardSQLFunction("tan", StandardBasicTypes.DOUBLE));
-        registry.register("tanh", new StandardSQLFunction("tanh", StandardBasicTypes.DOUBLE));
+        functionFactory.median();
+        functionFactory.stddev();
+        functionFactory.stddevPopSamp();
+        functionFactory.variance();
+        functionFactory.varPopSamp();
+        functionFactory.covarPopSamp();
+        functionFactory.corr();
+        functionFactory.regrLinearRegressionAggregates();
+        functionFactory.characterLength_length("dbms_lob.getlength(?1)");
+        functionFactory.octetLength_pattern("lengthb(?1)", "dbms_lob.getlength(?1)*2");
+        functionFactory.bitLength_pattern("lengthb(?1)*8", "dbms_lob.getlength(?1)*16");
 
-        // 비트 연산
-        registry.register("bitand", new StandardSQLFunction("bitand"));
+        functionFactory.coalesce();
 
-        // 문자열 함수들
-        registry.register("chr", new StandardSQLFunction("chr", StandardBasicTypes.CHARACTER));
-        registry.register("initcap", new StandardSQLFunction("initcap"));
-        registry.register("lower", new StandardSQLFunction("lower"));
-        registry.register("ltrim", new StandardSQLFunction("ltrim"));
-        registry.register("rtrim", new StandardSQLFunction("rtrim"));
-        registry.register("soundex", new StandardSQLFunction("soundex"));
-        registry.register("upper", new StandardSQLFunction("upper"));
-        registry.register("ascii", new StandardSQLFunction("ascii", StandardBasicTypes.INTEGER));
-        registry.register("instr", new StandardSQLFunction("instr", StandardBasicTypes.INTEGER));
-        registry.register("instrb", new StandardSQLFunction("instrb", StandardBasicTypes.INTEGER));
-        registry.register("lpad", new StandardSQLFunction("lpad", StandardBasicTypes.STRING));
-        registry.register("replace", new StandardSQLFunction("replace", StandardBasicTypes.STRING));
-        registry.register("rpad", new StandardSQLFunction("rpad", StandardBasicTypes.STRING));
-        registry.register("substr", new StandardSQLFunction("substr", StandardBasicTypes.STRING));
-        registry.register("substrb", new StandardSQLFunction("substrb", StandardBasicTypes.STRING));
-        registry.register("translate", new StandardSQLFunction("translate", StandardBasicTypes.STRING));
-
-        // 형변환 함수들
-        registry.register("to_char", new StandardSQLFunction("to_char", StandardBasicTypes.STRING));
-        registry.register("to_date", new StandardSQLFunction("to_date", StandardBasicTypes.TIMESTAMP));
-
-        // 날짜/시간 함수들
-        registry.noArgsBuilder("current_date")
-                .setInvariantType(basicTypeRegistry.resolve(StandardBasicTypes.DATE))
-                .setUseParenthesesWhenNoArgs(false)
+        registry.patternDescriptorBuilder("bitor", "(?1+?2-bitand(?1,?2))")
+                .setExactArgumentCount(2)
+                .setArgumentTypeResolver(StandardFunctionArgumentTypeResolvers.ARGUMENT_OR_IMPLIED_RESULT_TYPE)
                 .register();
-        registry.noArgsBuilder("current_time")
-                .setInvariantType(basicTypeRegistry.resolve(StandardBasicTypes.TIME))
-                .setUseParenthesesWhenNoArgs(false)
-                .register();
-        registry.noArgsBuilder("current_timestamp")
-                .setInvariantType(basicTypeRegistry.resolve(StandardBasicTypes.TIMESTAMP))
-                .setUseParenthesesWhenNoArgs(false)
+        registry.patternDescriptorBuilder("bitxor", "(?1+?2-2*bitand(?1,?2))")
+                .setExactArgumentCount(2)
+                .setArgumentTypeResolver(StandardFunctionArgumentTypeResolvers.ARGUMENT_OR_IMPLIED_RESULT_TYPE)
                 .register();
 
-        registry.noArgsBuilder("sysdate")
-                .setInvariantType(basicTypeRegistry.resolve(StandardBasicTypes.DATE))
-                .setUseParenthesesWhenNoArgs(false)
-                .register();
-        registry.noArgsBuilder("systimestamp")
-                .setInvariantType(basicTypeRegistry.resolve(StandardBasicTypes.TIMESTAMP))
-                .setUseParenthesesWhenNoArgs(false)
-                .register();
+        registry.registerBinaryTernaryPattern(
+                "locate",
+                basicTypeRegistry.resolve(StandardBasicTypes.INTEGER),
+                "instr(?2,?1)",
+                "instr(?2,?1,?3)",
+                FunctionParameterType.STRING, FunctionParameterType.STRING, FunctionParameterType.INTEGER,
+                typeConfiguration
+        ).setArgumentListSignature("(pattern, string[, start])");
 
-        registry.noArgsBuilder("uid")
-                .setInvariantType(basicTypeRegistry.resolve(StandardBasicTypes.INTEGER))
-                .setUseParenthesesWhenNoArgs(false)
-                .register();
+        functionFactory.listagg(null);
+        functionFactory.windowFunctions();
+        functionFactory.hypotheticalOrderedSetAggregates();
+        functionFactory.inverseDistributionOrderedSetAggregates();
+        registry.register("mode", new ModeStatsModeEmulation(typeConfiguration));
+        registry.register("trunc", new OracleTruncFunction(typeConfiguration));
+        registry.registerAlternateKey("truncate", "trunc");
 
-        registry.noArgsBuilder("user")
-                .setInvariantType(basicTypeRegistry.resolve(StandardBasicTypes.STRING))
-                .setUseParenthesesWhenNoArgs(false)
-                .register();
-
-        registry.register("last_day", new StandardSQLFunction("last_day", StandardBasicTypes.DATE));
-
-        // 특수 함수들
+        // Tibero: ROWID는 문자열로 취급 (Factory 기본 long 덮어씀)
         registry.noArgsBuilder("rowid")
                 .setInvariantType(basicTypeRegistry.resolve(StandardBasicTypes.STRING))
                 .setUseParenthesesWhenNoArgs(false)
                 .register();
 
-        registry.noArgsBuilder("rownum")
-                .setInvariantType(basicTypeRegistry.resolve(StandardBasicTypes.LONG))
-                .setUseParenthesesWhenNoArgs(false)
-                .register();
-
-        registry.namedDescriptorBuilder("concat")
-            .setExactArgumentCount(2)
-            .setInvariantType(basicTypeRegistry.resolve(StandardBasicTypes.STRING))
-            // 인자 타입이 모호하면 문자열로 처리
-            .setArgumentTypeResolver(StandardFunctionArgumentTypeResolvers.impliedOrInvariant(typeConfig, FunctionParameterType.STRING))
-            .register();
-
-        // 별칭 및 SQLFunctionTemplate 대체
-        registry.register("substring", new StandardSQLFunction("substr", StandardBasicTypes.STRING));
-
-        registry.patternDescriptorBuilder("locate", "instr(?2,?1)")
-            .setReturnTypeResolver(StandardFunctionReturnTypeResolvers.invariant(
-                basicTypeRegistry.resolve(StandardBasicTypes.INTEGER)))
-            .setExactArgumentCount(2)
-            .register();
-
-        registry.patternDescriptorBuilder("bit_length", "vsize(?1)*8")
-            .setReturnTypeResolver(StandardFunctionReturnTypeResolvers.invariant(
-                basicTypeRegistry.resolve(StandardBasicTypes.INTEGER)))
-            .setExactArgumentCount(1)
-            .register();
-
-        // NvlFunction 대체 - coalesce
-        registry.register("coalesce", new StandardSQLFunction("coalesce"));
-
-        // 추가 수학 함수들
-        registry.register("atan2", new StandardSQLFunction("atan2", StandardBasicTypes.FLOAT));
-        registry.register("log", new StandardSQLFunction("log", StandardBasicTypes.INTEGER));
-        registry.register("mod", new StandardSQLFunction("mod", StandardBasicTypes.INTEGER));
+        // Tibero 전용 함수
+        registry.register("instrb", new StandardSQLFunction("instrb", StandardBasicTypes.INTEGER));
+        registry.register("substrb", new StandardSQLFunction("substrb", StandardBasicTypes.STRING));
         registry.register("nvl", new StandardSQLFunction("nvl"));
         registry.register("nvl2", new StandardSQLFunction("nvl2"));
-        registry.register("power", new StandardSQLFunction("power", StandardBasicTypes.FLOAT));
-
-        // 날짜 연산 함수들
-        registry.register("add_months", new StandardSQLFunction("add_months", StandardBasicTypes.DATE));
-        registry.register("months_between", new StandardSQLFunction("months_between", StandardBasicTypes.FLOAT));
         registry.register("next_day", new StandardSQLFunction("next_day", StandardBasicTypes.DATE));
-
-        // str 별칭
+        registry.noArgsBuilder("uid")
+                .setInvariantType(basicTypeRegistry.resolve(StandardBasicTypes.INTEGER))
+                .setUseParenthesesWhenNoArgs(false)
+                .register();
+        registry.noArgsBuilder("user")
+                .setInvariantType(basicTypeRegistry.resolve(StandardBasicTypes.STRING))
+                .setUseParenthesesWhenNoArgs(false)
+                .register();
         registry.register("str", new StandardSQLFunction("to_char", StandardBasicTypes.STRING));
+
+        // mod/power/atan2 는 super.initializeFunctionRegistry 의 CommonFunctionFactory.math()·trigonometry()
+        // 등록(인자 개수·타입 검증 포함, power/atan2 = double)을 그대로 사용함.
+        // 재등록하면 double → float 로 좁아짐
+
+        // ------------------------------------------------------------------
+        // HQL array_* 함수는 등록하지 않는다 — 의도된 축소
+        //
+        // Hibernate 의 array_* 함수(Oracle 변종)는 배열 타입마다 만들어지는 PL/SQL 헬퍼
+        // (StringArray_length, StringArray_concat …)를 호출한다. 그 헬퍼를 Tibero 에 적용해
+        // 보았더니 DB 가 반복적으로 응답 불능에 빠졌다 — 특히 _concat 은 두 번째 호출부터
+        // 서버 워커가 멈추고 인스턴스 재기동으로만 풀렸다.
+        //
+        // 등록해두면 HQL 은 통과하고 실행 시점에 DB 가 멈추므로, 아예 등록하지 않아
+        // 파싱 단계에서 걸리게 한다. 배열 컬럼 매핑·왕복 자체는 이와 무관하게 동작하며,
+        // 네이티브 SQL 의 table() 언네스트로 같은 일을 할 수 있다.
+        //
+        // 상세는 TiberoUserDefinedTypeExporter 의 javadoc.
+        // ------------------------------------------------------------------
     }
 
     @Override
@@ -571,6 +563,24 @@ public class TiberoDialect extends Dialect {
     @Override
     public int getMaxNVarcharLength() {
         return 32766;
+    }
+
+    /**
+     * Tibero는 빈 문자열 '' 을 NULL로 저장함
+     */
+    @Override
+    public boolean isEmptyStringTreatedAsNull() {
+        return true;
+    }
+
+    @Override
+    public String getDual() {
+        return "dual";
+    }
+
+    @Override
+    public String getFromDualForSelectOnly() {
+        return " from " + getDual();
     }
 
 
@@ -894,8 +904,300 @@ public class TiberoDialect extends Dialect {
     }
 
     @Override
+    public String currentDate() {
+        return "current_date";
+    }
+
+    @Override
+    public String currentTime() {
+        return currentTimestamp();
+    }
+
+    @Override
+    public String currentTimestamp() {
+        return currentTimestampWithTimeZone();
+    }
+
+    @Override
+    public String currentLocalTime() {
+        return currentLocalTimestamp();
+    }
+
+    @Override
+    public String currentLocalTimestamp() {
+        return "localtimestamp";
+    }
+
+    @Override
+    public long getFractionalSecondPrecisionInNanos() {
+        return 1_000_000_000L; // seconds
+    }
+
+    @Override
+    public String castPattern(CastType from, CastType to) {
+        String result;
+        switch (to) {
+            case INTEGER:
+            case LONG:
+                result = BooleanDecoder.toInteger(from);
+                if (result != null) {
+                    return result;
+                }
+                break;
+            case INTEGER_BOOLEAN:
+                result = from == CastType.STRING
+                        ? buildStringToBooleanCastDecode("1", "0")
+                        : BooleanDecoder.toIntegerBoolean(from);
+                if (result != null) {
+                    return result;
+                }
+                break;
+            case YN_BOOLEAN:
+                result = from == CastType.STRING
+                        ? buildStringToBooleanCastDecode("'Y'", "'N'")
+                        : BooleanDecoder.toYesNoBoolean(from);
+                if (result != null) {
+                    return result;
+                }
+                break;
+            case BOOLEAN:
+                result = from == CastType.STRING
+                        ? buildStringToBooleanCastDecode("true", "false")
+                        : BooleanDecoder.toBoolean(from);
+                if (result != null) {
+                    return result;
+                }
+                break;
+            case TF_BOOLEAN:
+                result = from == CastType.STRING
+                        ? buildStringToBooleanCastDecode("'T'", "'F'")
+                        : BooleanDecoder.toTrueFalseBoolean(from);
+                if (result != null) {
+                    return result;
+                }
+                break;
+            case STRING:
+                switch (from) {
+                    case BOOLEAN:
+                    case INTEGER_BOOLEAN:
+                    case TF_BOOLEAN:
+                    case YN_BOOLEAN:
+                        return BooleanDecoder.toString(from);
+                    case DATE:
+                        return "to_char(?1,'YYYY-MM-DD')";
+                    case TIME:
+                        return "to_char(?1,'HH24:MI:SS')";
+                    case TIMESTAMP:
+                        return "to_char(?1,'YYYY-MM-DD HH24:MI:SS.FF9')";
+                    case OFFSET_TIMESTAMP:
+                        return "to_char(?1,'YYYY-MM-DD HH24:MI:SS.FF9TZH:TZM')";
+                    case ZONE_TIMESTAMP:
+                        return "to_char(?1,'YYYY-MM-DD HH24:MI:SS.FF9 TZR')";
+                }
+                break;
+            case CLOB:
+                return "to_clob(?1)";
+            case DATE:
+                if (from == CastType.STRING) {
+                    return "to_date(?1,'YYYY-MM-DD')";
+                }
+                break;
+            case TIME:
+                if (from == CastType.STRING) {
+                    return "to_date(?1,'HH24:MI:SS')";
+                }
+                break;
+            case TIMESTAMP:
+                if (from == CastType.STRING) {
+                    return "to_timestamp(?1,'YYYY-MM-DD HH24:MI:SS.FF9')";
+                }
+                break;
+            case OFFSET_TIMESTAMP:
+                if (from == CastType.STRING) {
+                    return "to_timestamp_tz(?1,'YYYY-MM-DD HH24:MI:SS.FF9TZH:TZM')";
+                }
+                break;
+            case ZONE_TIMESTAMP:
+                if (from == CastType.STRING) {
+                    return "to_timestamp_tz(?1,'YYYY-MM-DD HH24:MI:SS.FF9 TZR')";
+                }
+                break;
+        }
+        return super.castPattern(from, to);
+    }
+
+    @Override
+    public String extractPattern(TemporalUnit unit) {
+        switch (unit) {
+            case DAY_OF_WEEK:
+                return "to_number(to_char(?2,'D'))";
+            case DAY_OF_MONTH:
+                return "to_number(to_char(?2,'DD'))";
+            case DAY_OF_YEAR:
+                return "to_number(to_char(?2,'DDD'))";
+            case WEEK:
+                return "to_number(to_char(?2,'IW'))";
+            case WEEK_OF_YEAR:
+                return "to_number(to_char(?2,'WW'))";
+            case QUARTER:
+                return "to_number(to_char(?2,'Q'))";
+            case HOUR:
+                return "to_number(to_char(?2,'HH24'))";
+            case MINUTE:
+                return "to_number(to_char(?2,'MI'))";
+            case SECOND:
+                return "to_number(to_char(?2,'SS'))";
+            case EPOCH:
+                return "trunc((cast(?2 at time zone 'UTC' as date) - date '1970-1-1')*86400)";
+            default:
+                return super.extractPattern(unit);
+        }
+    }
+
+    /**
+     * month/quarter/year 덧셈 식을 만든다.
+     *
+     * <p>DATE 는 애초에 시각이 없으므로 {@code add_months} 를 그대로 쓰고,
+     * TIMESTAMP 는 {@code add_months} 가 잘라낸 소수 이하 초를 다시 더해 복원한다.
+     * 기존 WEEK/DAY 분기와 같은 방식이다.
+     *
+     * @param months 더할 개월 수 식 (`?2`, `(?2)*3`, `(?2)*12`)
+     */
+    private static String monthsPattern(TemporalType temporalType, String months) {
+        return String.format(
+                temporalType == TemporalType.DATE ? ADD_MONTHS_DATE : ADD_MONTHS_TIMESTAMP,
+                months, "?3");
+    }
+
+    @Override
+    public String timestampaddPattern(TemporalUnit unit, TemporalType temporalType, IntervalType intervalType) {
+        switch (unit) {
+            case YEAR:
+                return monthsPattern(temporalType, "(?2)*12");
+            case QUARTER:
+                return monthsPattern(temporalType, "(?2)*3");
+            case MONTH:
+                return monthsPattern(temporalType, "?2");
+            case WEEK:
+                if (temporalType != TemporalType.DATE) {
+                    return "(?3+numtodsinterval((?2)*7,'day'))";
+                }
+                return "(?3+(?2)" + unit.conversionFactor(DAY, this) + ")";
+            case DAY:
+                if (temporalType == TemporalType.DATE) {
+                    return "(?3+(?2))";
+                }
+                // fall through
+            case HOUR:
+            case MINUTE:
+            case SECOND:
+                return "(?3+numtodsinterval(?2,'?1'))";
+            case NANOSECOND:
+                return "(?3+numtodsinterval((?2)/1e9,'second'))";
+            case NATIVE:
+                return "(?3+numtodsinterval(?2,'second'))";
+            default:
+                throw new SemanticException(unit + " is not a legal field");
+        }
+    }
+
+    @Override
+    public String timestampdiffPattern(TemporalUnit unit, TemporalType fromTemporalType, TemporalType toTemporalType) {
+        final StringBuilder pattern = new StringBuilder();
+        final boolean hasTimePart = toTemporalType != TemporalType.DATE || fromTemporalType != TemporalType.DATE;
+        switch (unit) {
+            case YEAR:
+                extractField(pattern, YEAR, unit);
+                break;
+            case QUARTER:
+            case MONTH:
+                pattern.append("(");
+                extractField(pattern, YEAR, unit);
+                pattern.append("+");
+                extractField(pattern, MONTH, unit);
+                pattern.append(")");
+                break;
+            case DAY:
+                if (hasTimePart) {
+                    pattern.append("(cast(?3 as date)-cast(?2 as date))");
+                }
+                else {
+                    pattern.append("(?3-?2)");
+                }
+                break;
+            case WEEK:
+            case MINUTE:
+            case SECOND:
+            case HOUR:
+                if (hasTimePart) {
+                    pattern.append("((cast(?3 as date)-cast(?2 as date))");
+                }
+                else {
+                    pattern.append("((?3-?2)");
+                }
+                pattern.append(TemporalUnit.DAY.conversionFactor(unit, this));
+                pattern.append(")");
+                break;
+            case NATIVE:
+            case NANOSECOND:
+                if (hasTimePart) {
+                    // lateral 미지원 → dual 서브쿼리 없이 extract 합산
+                    pattern.append("(");
+                    extractField(pattern, DAY, unit);
+                    pattern.append("+");
+                    extractField(pattern, HOUR, unit);
+                    pattern.append("+");
+                    extractField(pattern, MINUTE, unit);
+                    pattern.append("+");
+                    extractField(pattern, SECOND, unit);
+                    pattern.append(")");
+                }
+                else {
+                    pattern.append("((?3-?2)");
+                    pattern.append(TemporalUnit.DAY.conversionFactor(unit, this));
+                    pattern.append(")");
+                }
+                break;
+            default:
+                throw new SemanticException("Unrecognized field: " + unit);
+        }
+        return pattern.toString();
+    }
+
+    private void extractField(StringBuilder pattern, TemporalUnit unit, TemporalUnit toUnit) {
+        pattern.append("extract(");
+        pattern.append(translateExtractField(unit));
+        pattern.append(" from (?3-?2)");
+        switch (unit) {
+            case YEAR:
+            case MONTH:
+                pattern.append(" year(9) to month");
+                break;
+            case DAY:
+            case HOUR:
+            case MINUTE:
+            case SECOND:
+                break;
+            default:
+                throw new SemanticException(unit + " is not a legal field");
+        }
+        pattern.append(")");
+        pattern.append(unit.conversionFactor(toUnit, this));
+    }
+
+    @Override
     public String getAddColumnString() {
         return "add";
+    }
+
+    @Override
+    public String getAlterColumnTypeString(String columnName, String columnType, String columnDefinition) {
+        return "modify " + columnName + " " + columnType;
+    }
+
+    @Override
+    public boolean supportsAlterColumnType() {
+        return true;
     }
 
     @Override
@@ -904,8 +1206,51 @@ public class TiberoDialect extends Dialect {
     }
 
     @Override
+    public boolean supportsIfExistsBeforeTableName() {
+        // drop table if exists 실측 OK
+        return true;
+    }
+
+    @Override
+    public boolean supportsIfExistsAfterAlterTable() {
+        return false;
+    }
+
+    @Override
     public SelectItemReferenceStrategy getGroupBySelectItemReferenceStrategy() {
         return SelectItemReferenceStrategy.EXPRESSION;
+    }
+
+    @Override
+    public String generatedAs(String generatedAs) {
+        return " generated always as (" + generatedAs + ")";
+    }
+
+    @Override
+    public IdentifierHelper buildIdentifierHelper(IdentifierHelperBuilder builder, DatabaseMetaData dbMetaData)
+            throws SQLException {
+        builder.setAutoQuoteInitialUnderscore(true);
+        return super.buildIdentifierHelper(builder, dbMetaData);
+    }
+
+    @Override
+    public boolean canDisableConstraints() {
+        return true;
+    }
+
+    @Override
+    public String getDisableConstraintStatement(String tableName, String name) {
+        return "alter table " + tableName + " disable constraint " + name;
+    }
+
+    @Override
+    public String getEnableConstraintStatement(String tableName, String name) {
+        return "alter table " + tableName + " enable constraint " + name;
+    }
+
+    @Override
+    public UniqueDelegate getUniqueDelegate() {
+        return uniqueDelegate;
     }
 
     @Override
@@ -927,6 +1272,27 @@ public class TiberoDialect extends Dialect {
         appender.appendSql("hextoraw('");
         PrimitiveByteArrayJavaType.INSTANCE.appendString(appender, bytes);
         appender.appendSql("')");
+    }
+
+    @Override
+    public void appendDateTimeLiteral(
+            SqlAppender appender,
+            java.time.temporal.TemporalAccessor temporalAccessor,
+            TemporalType precision,
+            java.util.TimeZone jdbcTimeZone) {
+        if (precision == TemporalType.TIMESTAMP && temporalAccessor.isSupported(ChronoField.OFFSET_SECONDS)) {
+            appender.appendSql("timestamp '");
+            appendAsTimestampWithNanos(appender, temporalAccessor, true, jdbcTimeZone, false);
+            appender.appendSql('\'');
+        }
+        else {
+            super.appendDateTimeLiteral(appender, temporalAccessor, precision, jdbcTimeZone);
+        }
+    }
+
+    @Override
+    public void appendDatetimeFormat(SqlAppender appender, String format) {
+        appender.appendSql(OracleDialect.datetimeFormat(format, true, true).result());
     }
 
 
@@ -1319,7 +1685,9 @@ public class TiberoDialect extends Dialect {
     // stored procedure 결과셋을 ref cursor로 반환
     @Override
     public CallableStatementSupport getCallableStatementSupport() {
-        return StandardCallableStatementSupport.REF_CURSOR_INSTANCE;
+        // 표준 구현은 이름 파라미터도 '?' 로만 내보내 등록 순서 기반 위치 바인딩이 된다.
+        // 선언 순서와 등록 순서가 다르면 예외 없이 값이 뒤바뀌므로 name => ? 표기를 쓴다.
+        return TiberoCallableStatementSupport.REF_CURSOR_INSTANCE;
     }
 
     // CREATE SCHEMA 구문 지원 여부
@@ -1391,6 +1759,17 @@ public class TiberoDialect extends Dialect {
     @Override
     public RowLockStrategy getWriteRowLockStrategy() {
         return RowLockStrategy.COLUMN;
+    }
+
+    @Override
+    public TimeZoneSupport getTimeZoneSupport() {
+        return TimeZoneSupport.NATIVE;
+    }
+
+    @Override
+    public boolean supportsTemporalLiteralOffset() {
+        // ANSI timestamp'...' +09:00 은 가능하나 JDBC escape 경로와의 정합을 위해 false
+        return false;
     }
 
     /**

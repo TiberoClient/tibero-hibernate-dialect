@@ -1,11 +1,13 @@
 package integration;
 
+import com.tmax.tibero.hibernate.procedure.TiberoCallableStatementSupport;
 import support.AbstractTiberoDialectTestBase;
 import com.tmax.tibero.hibernate.dialect.TiberoTypes;
 import org.hibernate.cfg.Configuration;
 import org.hibernate.dialect.Dialect;
 import org.hibernate.engine.spi.SessionFactoryImplementor;
 import org.hibernate.procedure.internal.StandardCallableStatementSupport;
+import org.hibernate.procedure.spi.CallableStatementSupport;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -120,11 +122,19 @@ public class RefCursorTest extends AbstractTiberoDialectTestBase {
 
     @Test
     public void unit_getCallableStatementSupport_returnsRefCursorInstance() {
-        assertSame(
-                "Dialect should use REF_CURSOR_INSTANCE",
-                StandardCallableStatementSupport.REF_CURSOR_INSTANCE,
-                dialect.getCallableStatementSupport()
-        );
+        CallableStatementSupport support = dialect.getCallableStatementSupport();
+
+        // REF CURSOR 지원 인스턴스를 돌려주되, Tibero 전용 구현이어야 한다.
+        // 표준 구현은 이름 파라미터를 '?' 로만 내보내 등록 순서 기반 위치 바인딩이 되므로
+        // 선언 순서와 다르게 등록하면 값이 조용히 뒤바뀐다.
+        // 회귀 검증: capability.ProcedureNamedParameterTest
+        assertNotNull(support);
+        assertTrue("REF CURSOR 지원 구현이어야 함", support instanceof StandardCallableStatementSupport);
+        assertEquals(
+                "Tibero 전용 CallableStatementSupport 여야 함 (name => ? 표기)",
+                "com.tmax.tibero.hibernate.procedure.TiberoCallableStatementSupport",
+                support.getClass().getName());
+        assertSame(TiberoCallableStatementSupport.REF_CURSOR_INSTANCE, support);
     }
 
     // ========================================================================
