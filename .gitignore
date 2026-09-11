@@ -1,0 +1,8 @@
+# 빌드 산출물
+build/
+out/
+
+# 빌드 도구 / IDE
+.gradle/
+.idea/
+*.iml

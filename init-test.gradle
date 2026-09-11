@@ -1,0 +1,11 @@
+// 테스트 전용 헬퍼 — 커맨드라인 -D 프로퍼티를 test JVM 으로 전달한다.
+//   ./gradlew --init-script init-test.gradle test \
+//     -Dhibernate.connection.url=jdbc:tibero:thin:@localhost:9999:tibero \
+//     -Dhibernate.connection.username=USERNAME -Dhibernate.connection.password=PASSWORD
+allprojects {
+    tasks.withType(Test).configureEach {
+        System.properties.each { k, v ->
+            if (k.toString().startsWith('hibernate.')) { systemProperty k.toString(), v.toString() }
+        }
+    }
+}
