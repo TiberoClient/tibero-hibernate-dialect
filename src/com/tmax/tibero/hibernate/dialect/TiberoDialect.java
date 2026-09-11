@@ -21,11 +21,15 @@ import com.tmax.tibero.hibernate.tool.schema.extract.internal.SequenceInformatio
 import com.tmax.tibero.hibernate.type.TiberoBinaryDoubleJdbcType;
 import com.tmax.tibero.hibernate.type.TiberoBinaryFloatJdbcType;
 import com.tmax.tibero.hibernate.type.TiberoJsonBlobJdbcType;
+import com.tmax.tibero.hibernate.type.TiberoStructJdbcType;
+import com.tmax.tibero.hibernate.type.TiberoArrayJdbcTypeConstructor;
+import com.tmax.tibero.hibernate.tool.schema.internal.TiberoUserDefinedTypeExporter;
 import org.hibernate.mapping.UserDefinedType;
 import org.hibernate.tool.schema.spi.Exporter;
 import org.hibernate.type.SqlTypes;
 import org.hibernate.type.descriptor.sql.internal.ArrayDdlTypeImpl;
 import org.hibernate.type.descriptor.sql.spi.DdlTypeRegistry;
+import com.tmax.tibero.hibernate.dialect.aggregate.TiberoAggregateSupport;
 import org.hibernate.dialect.aggregate.AggregateSupport;
 import jakarta.persistence.TemporalType;
 import org.hibernate.LockOptions;
@@ -124,6 +128,9 @@ import org.hibernate.query.sqm.produce.function.StandardFunctionReturnTypeResolv
  * diff만 보고 오버라이드를 추가하지 말 것.
  */
 public class TiberoDialect extends Dialect {
+
+    /** UDT DDL exporter. dialect 인스턴스에 묶여 있어 필드로 들고 있는다 */
+    private final Exporter<UserDefinedType> userDefinedTypeExporter = new TiberoUserDefinedTypeExporter(this);
     private static final Pattern DISTINCT_KEYWORD_PATTERN = Pattern.compile("\\bdistinct\\b", CASE_INSENSITIVE);
     private static final Pattern GROUP_BY_KEYWORD_PATTERN = Pattern.compile("\\bgroup\\s+by\\b", CASE_INSENSITIVE);
     private static final Pattern ORDER_BY_KEYWORD_PATTERN = Pattern.compile("\\border\\s+by\\b", CASE_INSENSITIVE);
@@ -148,6 +155,35 @@ public class TiberoDialect extends Dialect {
     protected void initDefaultProperties() {
         super.initDefaultProperties();
         registerDefaultProperties();
+    }
+
+    /**
+     * {@code drop type if exists} 를 쓴다.
+     *
+     * <h2>왜 필요한가</h2>
+     * {@code hbm2ddl.auto=create-drop} 은 <b>만들기 전에 먼저 지운다.</b> 첫 실행에는 지울
+     * 타입이 없으므로 {@code drop type X} 가 {@code JDBC-7071} 로 실패한다. 평소에는
+     * Hibernate 가 삼켜 넘어가지만 <b>{@code hbm2ddl.halt_on_error=true} 를 켜면 첫 실행이
+     * 통째로 죽는다.</b>
+     *
+     * <p>그 설정은 DDL 문제를 조사할 때 반드시 켜야 하는 것이다 — {@code @Struct} 성분
+     * check 제약 결함은 그것 없이는 찾지 못했다. 첫 실행에서 죽으면 그 도구를 못 쓴다.
+     *
+     * <pre>
+     * drop type NOPE_T force              FAIL  JDBC-7071
+     * drop type if exists NOPE_T force    OK     (실측)
+     * </pre>
+     *
+     * <p>Oracle 은 이 문법을 못 받아 {@code false} 를 쓴다. {@code drop table if exists} 와
+     * 마찬가지로 <b>Tibero 가 Oracle 보다 나은 지점</b>이다.
+     *
+     * <p>이 값은 원래 {@code false} 였다 — {@code supportsIfExistsBeforeTableName} 은
+     * 실측해서 {@code true} 로 두었는데 타입 쪽은 확인하지 않은 채 Hibernate 기본값을
+     * 그대로 둔 것이었다. {@code @Struct} 배열 작업에서 UDT 를 다루다 드러났다.
+     */
+    @Override
+    public boolean supportsIfExistsBeforeTypeName() {
+        return true;
     }
 
     @Override
@@ -444,6 +480,7 @@ public class TiberoDialect extends Dialect {
 
         // @Struct 임베더블을 object UDT 컬럼에 담는 경로. Hibernate 의 드라이버 중립 구현으로도
         // 대부분 동작하지만 null 바인딩과 중첩 struct 두 곳에서 tbjdbc 가 표준과 다르게 군다.
+        typeContributions.contributeJdbcType(TiberoStructJdbcType.INSTANCE);
 
         // 배열 필드를 VARRAY 컬럼에 담는 경로.
         // 기본 Dialect 는 supportsStandardArrays() 가 true 일 때만 아래 둘을 등록한다.
@@ -455,6 +492,80 @@ public class TiberoDialect extends Dialect {
         // (Oracle 의 OracleNestedTableJdbcTypeConstructor) 우리는 VARRAY 만 지원한다.
         // nested table 을 지원하게 되면 그 생성자와 함께 이 등록도 되살릴 것.
         final DdlTypeRegistry ddlTypeRegistry = typeContributions.getTypeConfiguration().getDdlTypeRegistry();
+        ddlTypeRegistry.addDescriptor(new ArrayDdlTypeImpl(this, false));
+        typeContributions.contributeJdbcTypeConstructor(TiberoArrayJdbcTypeConstructor.INSTANCE);
+    }
+
+    /**
+     * 배열 요소 타입에서 VARRAY 타입 이름을 만든다 — {@code String[]} → {@code StringArray}.
+     *
+     * <p>Hibernate 기본값은 {@code null} 이고, 그러면 배열 컬럼 DDL 자체가 만들어지지 않아
+     * 배열은 {@code VARBINARY} 이진 덩어리로 떨어진다. Oracle 과 같은 이름 규칙을 쓴다.
+     *
+     * <p>스키마에 <b>전역 이름</b>으로 만들어지므로 같은 요소 타입을 쓰는 여러 엔티티가
+     * 하나의 VARRAY 타입을 공유한다.
+     */
+    @Override
+    public String getArrayTypeName(String javaElementTypeName, String elementTypeName, Integer maxLength) {
+        return (javaElementTypeName == null ? elementTypeName : javaElementTypeName) + "Array";
+    }
+
+    /**
+     * 배열을 어떤 JDBC 타입으로 다룰지.
+     *
+     * <p>Hibernate 기본값은 {@code VARBINARY} — 배열을 직렬화해 하나의 이진 컬럼에 담는다.
+     * 왕복은 되지만 DB 에서 배열로 다룰 수 없어 {@code table()} 언네스트도, {@code array_*}
+     * 함수도 쓸 수 없다. {@code ARRAY} 로 바꿔 네이티브 VARRAY 컬럼을 쓴다.
+     *
+     * <p>⚠️ 이 값을 바꾸면 <b>기존 매핑의 컬럼 타입이 달라진다</b>. 6.6.0 에서 {@code int[]} 를
+     * 쓰던 스키마는 {@code raw}/{@code blob} 컬럼인데 6.6.1 은 {@code IntegerArray} 를
+     * 기대한다 — 릴리즈 노트에 안내가 필요하다.
+     */
+    @Override
+    public int getPreferredSqlTypeCodeForArray() {
+        return SqlTypes.ARRAY;
+    }
+
+    /**
+     * UDT DDL 을 내는 주체 — object 타입과 array 타입 둘 다.
+     *
+     * <p>Hibernate 기본 {@code StandardUserDefinedTypeExporter} 는 array UDT 에서 예외를
+     * 던지므로 배열을 지원하려면 반드시 교체해야 한다.
+     *
+     * @see com.tmax.tibero.hibernate.tool.schema.internal.TiberoUserDefinedTypeExporter
+     */
+    @Override
+    public Exporter<UserDefinedType> getUserDefinedTypeExporter() {
+        return userDefinedTypeExporter;
+    }
+
+    /**
+     * 집계(aggregate) 컬럼 지원 — {@code @Struct} 임베더블을 컬럼 하나에 담는 매핑.
+     *
+     * <p>Hibernate 기본값 {@code AggregateSupportImpl} 은 관련 훅에서 전부 예외를 던지므로,
+     * {@code @Struct} 엔티티가 하나라도 있으면 <b>SessionFactory 기동이 실패</b>한다.
+     * STRUCT 계열만 다루는 구현을 돌려준다 — JSON 집계는 6.6.1 범위 밖이다.
+     */
+    @Override
+    public AggregateSupport getAggregateSupport() {
+        return TiberoAggregateSupport.INSTANCE;
+    }
+
+    /**
+     * {@code create type ... as <여기>(...)} 의 종류 키워드.
+     *
+     * <p>Hibernate 기본값은 빈 문자열이라 {@code create type T as (...)} 가 나가는데,
+     * 그 문법은 Tibero 가 받지 않는다. Oracle 과 같이 {@code object} 를 쓴다.
+     *
+     * <pre>create type ADDR_T as object(street varchar2(255 char), city varchar2(255 char))</pre>
+     *
+     * <p>DDL 자체는 Hibernate 기본 {@code StandardUserDefinedTypeExporter} 가 만든다 —
+     * Oracle 이 별도 exporter 를 두는 것은 array UDT({@code varray} / {@code table of})의
+     * 비교 함수 때문이고, object UDT 에는 필요 없다.
+     */
+    @Override
+    public String getCreateUserDefinedTypeKindString() {
+        return "object";
     }
 
     @Override
