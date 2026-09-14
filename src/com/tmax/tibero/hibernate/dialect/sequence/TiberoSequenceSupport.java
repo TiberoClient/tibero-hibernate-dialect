@@ -43,7 +43,7 @@ public class TiberoSequenceSupport extends NextvalSequenceSupport {
                 );
         }
         return
-            String.format("%s start with %d increment by  %d", new Object[]{
+            String.format("%s start with %d increment by %d", new Object[]{
                 getCreateSequenceString(sequenceName),
                     initialValue,
                     incrementSize}

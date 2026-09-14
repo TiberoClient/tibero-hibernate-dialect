@@ -95,6 +95,30 @@ public class SequenceSupportTest extends AbstractTiberoDialectTestBase {
         }
     }
 
+    /**
+     * 생성 DDL 의 <b>공백이 세 분기에서 일치</b>하는지.
+     *
+     * <p>사소해 보이지만 실제로 문제가 됐다. 일반 경로만 {@code increment by  50} 처럼
+     * 공백이 두 칸이었다. SQL 의미는 같지만, 스키마 비교 도구나 DDL 을 문자열로
+     * 대조하는 마이그레이션 검증에서 <b>없는 차이가 있는 것처럼</b> 잡힌다.
+     *
+     * <p>{@code minvalue}/{@code maxvalue} 분기는 한 칸이었으므로, 같은 dialect 안에서
+     * 초기값 부호에 따라 공백이 달라지는 상태이기도 했다.
+     */
+    @Test
+    public void createSequenceString_hasConsistentSpacing() {
+        final String[] sqls = {
+                sequenceSupport.getCreateSequenceString("SEQ_A", 1, 50),      // 일반
+                sequenceSupport.getCreateSequenceString("SEQ_B", -10, 1),     // minvalue 분기
+                sequenceSupport.getCreateSequenceString("SEQ_C", 10, -1),     // maxvalue 분기
+        };
+        for (String sql : sqls) {
+            assertFalse("공백이 연달아 두 칸 이상 나오면 안 됨: [" + sql + "]", sql.contains("  "));
+            assertTrue("increment by 는 한 칸 간격이어야 함: [" + sql + "]",
+                    sql.contains("increment by ") && !sql.contains("increment by  "));
+        }
+    }
+
     @Test
     public void testSequenceSupport_createWithNegativeInitialOrNegativeIncrement_generatesValidSql() {
         final String seqName1 = uniqueObjectName("SEQ_NEGI");

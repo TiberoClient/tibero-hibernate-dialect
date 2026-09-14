@@ -523,7 +523,21 @@ public class TiberoDialect extends Dialect {
                 .setInvariantType(basicTypeRegistry.resolve(StandardBasicTypes.STRING))
                 .setUseParenthesesWhenNoArgs(false)
                 .register();
-        registry.register("str", new StandardSQLFunction("to_char", StandardBasicTypes.STRING));
+        // str() 은 일부러 등록하지 않는다.
+        //
+        // 예전에는 여기서 to_char 로 직접 등록했는데, 그러면 형식 문자열이 없는
+        // to_char(x) 가 나가 결과가 세션 NLS 설정에 좌우된다. 같은 질의가 세션마다
+        // 다른 문자열을 돌려주는 셈이라 값 비교·직렬화가 조용히 깨진다.
+        //
+        //   NLS_DATE_FORMAT 기본        str(날짜) → "2024/03/05"
+        //   NLS_DATE_FORMAT='DD/MM/YYYY' str(날짜) → "05/03/2024"   ← 같은 값, 다른 결과
+        //
+        // Hibernate 기본 등록(CastStrEmulation)은 str(x) 를 cast(x as String) 으로
+        // 넘기고, 그쪽은 castPattern() 이 형식을 명시한다 — to_char(x,'YYYY-MM-DD').
+        // 그래서 등록을 지우는 것이 곧 고치는 것이다.
+        //
+        // 형식을 직접 주고 싶으면 to_char(x,'…') 를 쓰면 된다. 그 함수는
+        // functionFactory.toCharNumberDateTimestamp() 가 따로 등록한다.
 
         // mod/power/atan2 는 super.initializeFunctionRegistry 의 CommonFunctionFactory.math()·trigonometry()
         // 등록(인자 개수·타입 검증 포함, power/atan2 = double)을 그대로 사용함.
