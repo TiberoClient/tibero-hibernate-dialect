@@ -1755,7 +1755,19 @@ public class TiberoDialect extends Dialect {
 
     @Override
     public boolean supportsLateral() {
-        // LATERAL / CROSS APPLY 실측 실패 → 정직하게 off
+        // LATERAL / CROSS APPLY 를 Tibero 7 이 받지 않는다 — 다섯 가지 문법 전부 실측 실패.
+        //
+        //   from A a, lateral (…) t                  JDBC-8021 Invalid table name
+        //   from A a cross join lateral (…) t        JDBC-8021
+        //   from A a cross apply (…) t               JDBC-8021
+        //   from A a left join lateral (…) t on 1=1  JDBC-8021
+        //   from A a outer apply (…) t               JDBC-8022 Invalid end of SQL
+        //
+        // true 로 올리면 Hibernate 가 이 문법을 만들어 내고 질의가 통째로 실패한다.
+        //
+        // 언제 다시 볼 것인가 — 주석으로 "나중에 확인"이라고 적어 두면 아무도 안 본다.
+        // 그래서 capability.LateralSupportTest 가 위 다섯 문법을 매 실행마다 찔러 본다.
+        // Tibero 가 지원을 추가하면 그 테스트가 실패하면서 알려 준다.
         return false;
     }
 
