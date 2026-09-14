@@ -36,6 +36,8 @@ import static org.junit.Assert.*;
  * - createOptionalTableUpdateOperation (SecondaryTable → MERGE)
  * - rowId (@RowId)
  * - initDefaultProperties / registerDefaultProperties
+ * - getMaxAliasLength           (§6.5 — 선언값만 있고 실제 생성 확인이 없었음)
+ * - canDisableConstraints       (§6.5 — truncate 경로 확인이 없었음)
  */
 public class DialectHooksTest extends AbstractTiberoDialectTestBase {
 
@@ -220,6 +222,129 @@ public class DialectHooksTest extends AbstractTiberoDialectTestBase {
 
         @Column(name = "DETAIL", table = "HOOK_SEC_DET")
         public String detail;
+    }
+
+    // ------------------------------------------------------------------
+    // §6.5 — 선언값은 있었지만 DB 동작 확인이 없던 두 훅
+    // ------------------------------------------------------------------
+
+    /**
+     * {@code getMaxAliasLength() = 118} 이 실제 Tibero 한계와 맞는지.
+     *
+     * <p>기존 {@code LimitCapabilityTest} 는 이 값을 <b>선언값으로만</b> 확인했다
+     * (그 파일 주석에 "contract-only" 라고 적혀 있다). 선언이 실제보다 크면 Hibernate 가
+     * DB 가 못 받는 길이의 별칭을 만들어 낸다 — 조인이 깊어질 때만 터져서 찾기 어렵다.
+     *
+     * <p>Tibero 의 식별자 한계는 128 인데 별칭은 118 로 잡아 두었다. Hibernate 가 별칭 뒤에
+     * 접미사를 붙일 여유를 남기는 관례로, Oracle dialect 도 같은 방식이다.
+     */
+    @Test
+    public void maxAliasLength_declaredValueIsAcceptedByTibero() {
+        final int max = new TiberoDialect().getMaxAliasLength();
+        assertEquals(118, max);
+
+        final String alias = "A".repeat(max);
+        final Long v = inTransactionReturning(session -> ((Number) session
+                .createNativeQuery("select 1 as " + alias + " from dual", Object.class)
+                .getSingleResult()).longValue());
+        assertEquals("118자 별칭은 받아야 함", Long.valueOf(1L), v);
+    }
+
+    /** 선언값이 실제 한계보다 <b>작은</b> 쪽인지 — 크면 위험하고 작으면 안전하다. */
+    @Test
+    public void maxAliasLength_isNotLargerThanTheIdentifierLimit() {
+        final TiberoDialect dialect = new TiberoDialect();
+        assertTrue("별칭 한계가 식별자 한계를 넘으면 안 됨",
+                dialect.getMaxAliasLength() <= dialect.getMaxIdentifierLength());
+
+        final String tooLong = "A".repeat(dialect.getMaxIdentifierLength() + 1);
+        try {
+            inTransactionReturning(session -> session
+                    .createNativeQuery("select 1 as " + tooLong + " from dual", Object.class)
+                    .getSingleResult());
+            fail("식별자 한계를 넘는 별칭은 거부돼야 함 — 선언값의 전제가 무너진다");
+        }
+        catch (Exception expected) {
+            // Tibero 가 거부하는 것이 정상
+        }
+    }
+
+    /**
+     * {@code canDisableConstraints() = true} 의 <b>쓰임새</b>인 truncate 경로가 실제로 되는지.
+     *
+     * <p>Hibernate 가 이 훅을 보는 이유는 스키마 정리 때문이다. 외래 키가 걸린 테이블은
+     * 그냥 {@code truncate} 할 수 없으므로 <b>제약을 끄고 → 비우고 → 다시 켜는</b> 순서를 쓴다.
+     * 기존 {@code DmlCapabilityTest} 는 끄고 켜는 문장만 확인했고 <b>그 사이에 truncate 가
+     * 되는지</b>는 보지 않았다.
+     *
+     * <p>제약이 켜져 있을 때는 막히고 꺼져 있을 때는 통과하는 것까지 확인해야, 이 훅이
+     * 약속하는 동작이 성립한다.
+     */
+    @Test
+    public void canDisableConstraints_enablesTruncateOfReferencedTable() {
+        final TiberoDialect dialect = new TiberoDialect();
+        assertTrue(dialect.canDisableConstraints());
+
+        final String parent = "HOOK_FK_PARENT";
+        final String child = "HOOK_FK_CHILD";
+        final String fk = "HOOK_FK_REF";
+        dropTableWithRetry(child);
+        dropTableWithRetry(parent);
+        inTransaction(session -> {
+            session.createNativeMutationQuery(
+                    "create table " + parent + " (id number(19,0) primary key)").executeUpdate();
+            session.createNativeMutationQuery(
+                    "create table " + child + " (id number(19,0) primary key, pid number(19,0), "
+                            + "constraint " + fk + " foreign key (pid) references " + parent + "(id))")
+                    .executeUpdate();
+            session.createNativeMutationQuery("insert into " + parent + " values (1)").executeUpdate();
+            session.createNativeMutationQuery("insert into " + child + " values (1,1)").executeUpdate();
+        });
+        try {
+            // ① 제약이 켜져 있으면 부모를 비울 수 없다
+            try {
+                inTransaction(session -> session
+                        .createNativeMutationQuery("truncate table " + parent).executeUpdate());
+                fail("외래 키가 살아 있는데 truncate 가 통과했다 — 이 훅의 전제가 무너진다");
+            }
+            catch (Exception expected) {
+                // 막히는 것이 정상
+            }
+
+            // ② 제약을 끄면 비울 수 있다
+            inTransaction(session -> {
+                session.createNativeMutationQuery(
+                        dialect.getDisableConstraintStatement(child, fk)).executeUpdate();
+                session.createNativeMutationQuery("truncate table " + child).executeUpdate();
+                session.createNativeMutationQuery("truncate table " + parent).executeUpdate();
+                session.createNativeMutationQuery(
+                        dialect.getEnableConstraintStatement(child, fk)).executeUpdate();
+            });
+
+            assertEquals("부모가 비워져야 함", 0L, countRows(parent));
+            assertEquals("자식도 비워져야 함", 0L, countRows(child));
+
+            // ③ 다시 켠 뒤에는 제약이 살아 있어야 한다
+            try {
+                inTransaction(session -> session
+                        .createNativeMutationQuery("insert into " + child + " values (9,999)")
+                        .executeUpdate());
+                fail("제약을 다시 켰는데 없는 부모를 참조하는 행이 들어갔다");
+            }
+            catch (Exception expected) {
+                // 막히는 것이 정상
+            }
+        }
+        finally {
+            dropTableWithRetry(child);
+            dropTableWithRetry(parent);
+        }
+    }
+
+    private long countRows(String table) {
+        return inTransactionReturning(session -> ((Number) session
+                .createNativeQuery("select count(*) from " + table, Object.class)
+                .getSingleResult()).longValue());
     }
 
     @Entity(name = "RowIdEntity")
