@@ -1,6 +1,7 @@
 package contract;
 
 import com.tmax.tibero.hibernate.dialect.TiberoDialect;
+import org.hibernate.dialect.DatabaseVersion;
 import org.hibernate.dialect.Dialect;
 import com.tmax.tibero.hibernate.dialect.aggregate.TiberoAggregateSupport;
 import org.hibernate.tool.schema.internal.StandardUserDefinedTypeExporter;
@@ -128,8 +129,7 @@ public class DialectDecisionContractTest {
     public void defaultFit_apis_areNotOverriddenOnTiberoDialect() {
         for (String name : new String[]{
                 "getInExpressionCountLimit",
-                "useInputStreamToInsertBlob",
-                "getMinimumSupportedVersion"
+                "useInputStreamToInsertBlob"
         }) {
             assertFalse(
                     name + " 은 기본값 적합. Oracle 값을 그대로 넣지 말 것. "
@@ -138,6 +138,39 @@ public class DialectDecisionContractTest {
         }
     }
 
+    /**
+     * {@code getMinimumSupportedVersion} 은 <b>구현됨</b> — 예전에는 "기본값 적합" 으로
+     * 분류했으나 근거가 무효였다.
+     *
+     * <p>무인자 생성자의 {@code DatabaseVersion.make(7)} 은 그 경로에만 적용되고,
+     * 운영에서 실제로 쓰이는 {@code Dialect(DialectResolutionInfo)} 는
+     * {@code getMinimumSupportedVersion()} 을 하한으로 쓴다. 재정의하지 않으면 하한이
+     * {@code ZERO_VERSION} 이라 Tibero 4 서버에 붙여도 {@code checkVersion()} 이
+     * 걸리지 않았다.
+     *
+     * <p>하한은 {@code 7.0} 이 상한이다 — tbjdbc 가 마이너를 유실해 정상적인 7.2.6
+     * 서버도 {@code 7.0} 으로 보고되므로 {@code make(7,2)} 로 두면 매 기동마다
+     * {@code HHH000511} 오탐이 뜬다.
+     */
+    @Test
+    public void minimumSupportedVersion_isOverridden_andCappedAtMajor7() throws Exception {
+        assertTrue("getMinimumSupportedVersion 은 재정의되어야 한다",
+                TIBERO_DECLARED.contains("getMinimumSupportedVersion"));
+
+        final java.lang.reflect.Method m =
+                Dialect.class.getDeclaredMethod("getMinimumSupportedVersion");
+        m.setAccessible(true);
+        final DatabaseVersion min = (DatabaseVersion) m.invoke(dialect);
+
+        assertEquals("메이저 하한은 7", 7, min.getMajor());
+        assertEquals("마이너는 0 이어야 한다 — tbjdbc 가 마이너를 0 으로 보고하므로 "
+                + "7.2 로 두면 정상 서버에도 HHH000511 오탐이 뜬다", 0, min.getMinor());
+
+        assertTrue("Tibero 6 은 하한 미달로 잡혀야 함",
+                DatabaseVersion.make(6, 9).isBefore(min.getMajor(), min.getMinor(), min.getMicro()));
+        assertFalse("tbjdbc 가 보고하는 7.0 은 통과해야 함",
+                DatabaseVersion.make(7, 0).isBefore(min.getMajor(), min.getMinor(), min.getMicro()));
+    }
     @Test
     public void defaultFit_values() {
         assertEquals(
@@ -170,7 +203,6 @@ public class DialectDecisionContractTest {
                 "getDropEnumTypeCommand",
                 "getEnumTypeDeclaration",
                 "getInExpressionCountLimit",
-                "getMinimumSupportedVersion",
                 "useInputStreamToInsertBlob"
         );
         for (String name : documented) {

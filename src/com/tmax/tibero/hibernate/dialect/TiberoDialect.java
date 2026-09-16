@@ -158,9 +158,15 @@ public class TiberoDialect extends Dialect {
     private final SequenceSupport tiberoSequenceSupport = TiberoSequenceSupport.getInstance(this);
     private final UniqueDelegate uniqueDelegate = new CreateTableUniqueDelegate(this);
 
+    private static final DatabaseVersion MINIMUM_VERSION = DatabaseVersion.make(7);
+
+    @Override
+    protected DatabaseVersion getMinimumSupportedVersion() {
+        return MINIMUM_VERSION;
+    }
+
     public TiberoDialect() {
-        super(DatabaseVersion.make(7));
-        registerDefaultProperties();
+        super(MINIMUM_VERSION);
     }
 
     // mandatory constructor
