@@ -175,24 +175,54 @@ public class TypeSystemTest extends AbstractTiberoDialectTestBase {
     }
 
     @Test
-    public void resolve_NUMERIC_scale0_precision1_shouldReturnBoolean() {
+    public void resolve_NUMERIC_scale0_precision1_shouldReturnInteger_notBoolean() {
         JdbcType t = dialect.resolveSqlTypeDescriptor("number", SqlTypes.NUMERIC, 1, 0, jdbcTypeRegistry);
         assertNotNull(t);
-        assertEquals(SqlTypes.BOOLEAN, t.getJdbcTypeCode());
+        assertEquals(SqlTypes.INTEGER, t.getJdbcTypeCode());
     }
 
     @Test
-    public void resolve_NUMERIC_scale0_precision3_shouldReturnTinyint() {
+    public void resolve_NUMERIC_scale0_precision3_shouldReturnInteger_notTinyint() {
         JdbcType t = dialect.resolveSqlTypeDescriptor("number", SqlTypes.NUMERIC, 3, 0, jdbcTypeRegistry);
         assertNotNull(t);
-        assertEquals(SqlTypes.TINYINT, t.getJdbcTypeCode());
+        assertEquals(SqlTypes.INTEGER, t.getJdbcTypeCode());
     }
 
     @Test
-    public void resolve_NUMERIC_scale0_precision5_shouldReturnSmallint() {
+    public void resolve_NUMERIC_scale0_precision5_shouldReturnInteger_notSmallint() {
         JdbcType t = dialect.resolveSqlTypeDescriptor("number", SqlTypes.NUMERIC, 5, 0, jdbcTypeRegistry);
         assertNotNull(t);
-        assertEquals(SqlTypes.SMALLINT, t.getJdbcTypeCode());
+        assertEquals(SqlTypes.INTEGER, t.getJdbcTypeCode());
+    }
+
+    /**
+     * ⚠️ {@code precision == 0} 은 정수로 좁히면 안 된다.
+     *
+     * <p>tbjdbc 는 <b>맨 집계</b>의 precision 을 0 으로 보고한다
+     * ({@code count(*)} · {@code sum} · {@code avg} 전부 {@code precision=0 scale=0}).
+     * {@code precision != 0} 가드를 조건 안쪽에 두면 0 이 {@code <= 19} 에 걸려
+     * BIGINT 가 되고, {@code select avg(v)} 가 3.5 대신 3 으로 깎인다 —
+     * 고치려던 것과 같은 유형의 조용한 손실을 새로 만드는 셈이다.
+     *
+     * <p>나눗셈 결과({@code avg(7)/2})는 precision 을 38 로 보고해 이 분기를 타지
+     * 않으므로 가드 위치 검증에 쓸 수 없다. 값 왕복 쪽은
+     * {@code capability.ReviewFixRegressionTest#aggregatePrecisionZero_keepsDecimalPrecision}
+     * 이 맡는다.
+     */
+    @Test
+    public void resolve_NUMERIC_precision0_staysNumeric_forAggregates() {
+        JdbcType t = dialect.resolveSqlTypeDescriptor("number", SqlTypes.NUMERIC, 0, 0, jdbcTypeRegistry);
+        assertNotNull(t);
+        assertEquals("집계 컬럼(precision=0)은 NUMERIC 으로 남아야 BigDecimal 정밀도가 유지된다",
+                SqlTypes.NUMERIC, t.getJdbcTypeCode());
+    }
+
+    /** precision 20 이상도 정수로 좁히지 않는다. */
+    @Test
+    public void resolve_NUMERIC_precision38_staysNumeric() {
+        JdbcType t = dialect.resolveSqlTypeDescriptor("number", SqlTypes.NUMERIC, 38, 0, jdbcTypeRegistry);
+        assertNotNull(t);
+        assertEquals(SqlTypes.NUMERIC, t.getJdbcTypeCode());
     }
 
     @Test

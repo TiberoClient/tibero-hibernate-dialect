@@ -895,14 +895,12 @@ public class TiberoDialect extends Dialect {
                 }
                 break;
             case NUMERIC:
-                if (scale == 0) {
-                    switch (precision) {
-                        case 1:  return jdbcTypeRegistry.getDescriptor(SqlTypes.BOOLEAN);
-                        case 3:  return jdbcTypeRegistry.getDescriptor(SqlTypes.TINYINT);
-                        case 5:  return jdbcTypeRegistry.getDescriptor(SqlTypes.SMALLINT);
-                        case 10: return jdbcTypeRegistry.getDescriptor(SqlTypes.INTEGER);
-                        case 19: return jdbcTypeRegistry.getDescriptor(SqlTypes.BIGINT);
-                        default: return jdbcTypeRegistry.getDescriptor(SqlTypes.NUMERIC); // 안전 fallback
+                if (scale == 0 && precision != 0) {
+                    if (precision <= 10) {
+                        return jdbcTypeRegistry.getDescriptor(SqlTypes.INTEGER);
+                    }
+                    if (precision <= 19) {
+                        return jdbcTypeRegistry.getDescriptor(SqlTypes.BIGINT);
                     }
                 }
                 /**
@@ -910,6 +908,7 @@ public class TiberoDialect extends Dialect {
                  * scale == null 에 해당하는 값일 때 (ex : float(30), number) 처리
                  * (단, scale == null 일 때 0으로 리턴되는 jdbc 문제 개선 후)
                  */
+                break;
         }
         return super.resolveSqlTypeDescriptor(columnTypeName, jdbcTypeCode, precision, scale, jdbcTypeRegistry);
     }

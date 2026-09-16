@@ -141,6 +141,76 @@ public class ReviewFixRegressionTest extends AbstractTiberoDialectTestBase {
     }
 
     // ------------------------------------------------------------------
+    // §4.3  number(p,0) 역매핑 — 값을 넣고 읽어야 잡힌다
+    // ------------------------------------------------------------------
+
+    /**
+     * 타입 해석만 보고 <b>값을 왕복시키지 않아서</b> 이 결함이 통과했다. 그래서 여기서는
+     * dialect 가 만들지 않은 스키마에 정상 범위 값을 넣고 네이티브 쿼리로 읽는다.
+     */
+    @Test
+    public void numberReverseMapping_roundTripsRealValues() {
+        dropTableWithRetry(RM);
+        inTransaction(s -> s.doWork(c -> {
+            try (Statement st = c.createStatement()) {
+                st.execute("create table " + RM + " (b1 number(1,0), b3 number(3,0), "
+                        + "b5 number(5,0), b10 number(10,0), b19 number(19,0))");
+                st.execute("insert into " + RM + " values (7, 200, 50000, 123, 456)");
+            }
+        }));
+        try {
+            assertEquals("number(1,0) 의 7 이 true 가 되면 안 된다",
+                    7L, num(RM, "b1"));
+            assertEquals("number(3,0) 은 -999~999 — TINYINT 로 좁히면 JDBC-590749",
+                    200L, num(RM, "b3"));
+            assertEquals("number(5,0) 은 -99999~99999 — SMALLINT 로 좁히면 JDBC-590749",
+                    50000L, num(RM, "b5"));
+            assertEquals(123L, num(RM, "b10"));
+            assertEquals(456L, num(RM, "b19"));
+        }
+        finally {
+            dropTableWithRetry(RM);
+        }
+    }
+
+    /**
+     * ⚠️ {@code precision != 0} 가드가 조건 <b>바깥</b>에 있어야 한다.
+     *
+     * <p>tbjdbc 는 <b>맨 집계</b>의 precision 을 0 으로 보고한다 — {@code avg} · {@code sum} ·
+     * {@code count} 가 전부 {@code precision=0 scale=0} 이다. 가드를 조건 안쪽에 두면
+     * 0 이 {@code precision <= 19} 에 걸려 BIGINT 가 되고, 소수가 예외 없이 깎인다.
+     *
+     * <pre>
+     * 가드 바깥(정상)   select avg(v) → 3.5  (BigDecimal)
+     * 가드 안쪽(결함)   select avg(v) → 3    (Long)        ← 0.5 유실
+     * </pre>
+     *
+     * <p>단순히 {@code avg(7)/2} 를 보면 안 된다 — 나눗셈 결과는 precision 을 38 로
+     * 보고해서 이 분기를 타지 않으므로 가드를 잘못 옮겨도 통과한다(실측).
+     * <b>맨 집계이면서 결과가 소수</b>여야 이 결함이 드러난다.
+     */
+    @Test
+    public void aggregatePrecisionZero_keepsDecimalPrecision() {
+        // n = 1..20 → 평균 10.5 (소수)
+        final Object avg = inTransactionReturning(s ->
+                s.createNativeQuery("select avg(N) from RFX_ROW", Object.class).getSingleResult());
+        assertNotNull(avg);
+        assertFalse("맨 집계가 정수 타입으로 해석되면 소수가 깎인다 — precision!=0 가드가 "
+                        + "조건 안쪽에 있는지 확인할 것. 실제 타입: " + avg.getClass().getSimpleName(),
+                avg instanceof Long || avg instanceof Integer);
+        assertEquals("avg(1..20) = 10.5 가 그대로 나와야 한다", 0,
+                new java.math.BigDecimal("10.5").compareTo(new java.math.BigDecimal(avg.toString())));
+    }
+
+    // ------------------------------------------------------------------
+
+    private long num(String table, String col) {
+        Object v = inTransactionReturning(s ->
+                s.createNativeQuery("select " + col + " from " + table, Object.class).getSingleResult());
+        assertNotNull(col + " 이 null", v);
+        assertFalse(col + " 이 Boolean 으로 해석됨 — 값이 조용히 바뀐다", v instanceof Boolean);
+        return ((Number) v).longValue();
+    }
 
     private String lastSelect() {
         return SqlCaptureInspector.getSqls().stream()

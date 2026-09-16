@@ -185,9 +185,9 @@ public class E2ETest extends AbstractTiberoDialectTestBase {
 
 
             // number(p,0) => reverse mapping to integer family
-            assertResolvedDefaultSqlType(d, jreg, meta.cols[5], SqlTypes.BOOLEAN);
-            assertResolvedDefaultSqlType(d, jreg, meta.cols[6], SqlTypes.TINYINT);
-            assertResolvedDefaultSqlType(d, jreg, meta.cols[7], SqlTypes.SMALLINT);
+            assertResolvedDefaultSqlType(d, jreg, meta.cols[5], SqlTypes.INTEGER);
+            assertResolvedDefaultSqlType(d, jreg, meta.cols[6], SqlTypes.INTEGER);
+            assertResolvedDefaultSqlType(d, jreg, meta.cols[7], SqlTypes.INTEGER);
             assertResolvedDefaultSqlType(d, jreg, meta.cols[8], SqlTypes.INTEGER);
             assertResolvedDefaultSqlType(d, jreg, meta.cols[9], SqlTypes.BIGINT);
 
