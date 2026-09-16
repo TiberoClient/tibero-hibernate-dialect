@@ -45,6 +45,7 @@ import org.hibernate.sql.ast.tree.expression.Summarization;
 import org.hibernate.sql.ast.tree.from.ValuesTableReference;
 import org.hibernate.sql.ast.tree.select.QueryGroup;
 import org.hibernate.sql.ast.tree.select.QueryPart;
+import org.hibernate.sql.ast.tree.from.QueryPartTableReference;
 import org.hibernate.type.SqlTypes;
 import org.hibernate.type.descriptor.jdbc.JdbcType;
 
@@ -245,6 +246,11 @@ public class  TiberoSqlAstTranslator<T extends JdbcOperation> extends SqlAstTran
         }
         lockingWrapper.applyPredicate(new InSubQueryPredicate(idExpression, subquery, false));
         return lockingWrapper;
+    }
+
+    @Override
+    public void visitQueryPartTableReference(QueryPartTableReference tableReference) {
+        emulateQueryPartTableReferenceColumnAliasing(tableReference);
     }
 
     /**

@@ -120,6 +120,27 @@ public class ReviewFixRegressionTest extends AbstractTiberoDialectTestBase {
     }
 
     // ------------------------------------------------------------------
+    // §4.2  FROM 절 파생 테이블
+    // ------------------------------------------------------------------
+
+    /**
+     * Hibernate 기본 구현은 파생 테이블의 컬럼 이름을 {@code t(x)} 로 괄호에 붙이는데
+     * Tibero 가 {@code JDBC-8022} 로 거부한다. 별칭이 서브쿼리 안쪽으로 들어가야 한다.
+     */
+    @Test
+    public void derivedTable_inFromClause_works() {
+        SqlCaptureInspector.clear();
+        Object v = inTransactionReturning(s -> s.createQuery(
+                "select t.x from (select e.n as x from RfxRow e where e.id = 7) t", Object.class)
+                .getSingleResult());
+        assertEquals(7, ((Number) v).intValue());
+
+        final String sql = lastSelect();
+        assertFalse("컬럼 목록을 괄호로 붙이면 JDBC-8022: " + sql,
+                sql.matches("(?s).*\\)\\s+\\w+\\s*\\([^)]*\\).*"));
+    }
+
+    // ------------------------------------------------------------------
 
     private String lastSelect() {
         return SqlCaptureInspector.getSqls().stream()
