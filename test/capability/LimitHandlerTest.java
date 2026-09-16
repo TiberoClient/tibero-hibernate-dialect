@@ -57,8 +57,12 @@ public class LimitHandlerTest extends AbstractTiberoDialectTestBase {
     // 1) Dialect wiring
     // ------------------------------------------------------------------------
     @Test
-    public void testDialectReturnsTiberoLimitHandlerSingleton() {
-        assertSame(TiberoLimitHandler.INSTANCE, dialect.getLimitHandler());
+    public void testDialectReturnsFreshLimitHandlerPerCall() {
+        final LimitHandler first = dialect.getLimitHandler();
+        final LimitHandler second = dialect.getLimitHandler();
+        assertTrue(first instanceof TiberoLimitHandler);
+        assertNotSame("호출마다 새 인스턴스여야 공유 가변 상태가 없다", first, second);
+        assertNotSame("공유 싱글턴을 돌려주면 안 된다", TiberoLimitHandler.INSTANCE, first);
     }
 
     // ------------------------------------------------------------------------

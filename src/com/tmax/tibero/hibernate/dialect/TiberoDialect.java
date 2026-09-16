@@ -1345,7 +1345,7 @@ public class TiberoDialect extends Dialect {
 
     @Override
     public LimitHandler getLimitHandler() {
-        return TiberoLimitHandler.INSTANCE;
+        return new TiberoLimitHandler();
     }
 
 

@@ -14,9 +14,10 @@ public class TiberoLimitHandler extends AbstractLimitHandler {
     private boolean useMaxForLimit;
     private boolean supportOffset;
 
+    @Deprecated
     public static final TiberoLimitHandler INSTANCE = new TiberoLimitHandler();
 
-    TiberoLimitHandler() {
+    public TiberoLimitHandler() {
     }
 
     @Override
