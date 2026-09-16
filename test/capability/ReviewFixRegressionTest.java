@@ -203,6 +203,76 @@ public class ReviewFixRegressionTest extends AbstractTiberoDialectTestBase {
     }
 
     // ------------------------------------------------------------------
+    // §4.4  페이징 + 비관적 락 — 바깥 order by
+    // ------------------------------------------------------------------
+
+    /**
+     * locking wrapper 는 페이징을 서브쿼리로 밀고 {@code for update} 를 바깥에 둔다.
+     * 서브쿼리의 정렬은 "어떤 행을 고를지", 바깥의 정렬은 "어떤 순서로 돌려줄지" 라
+     * 역할이 다르다. 바깥이 없으면 순서가 실행계획에 좌우된다.
+     *
+     * <p>결과 순서만 단언하면 우연히 통과할 수 있으므로 <b>SQL 모양을 함께</b> 고정한다.
+     */
+    @Test
+    public void pagedLockedQuery_keepsOuterOrderBy() {
+        SqlCaptureInspector.clear();
+        List<Row> rows = inTransactionReturning(s -> s.createQuery(
+                "from RfxRow e order by e.name", Row.class)
+                .setMaxResults(3)
+                .setLockMode(LockModeType.PESSIMISTIC_WRITE)
+                .getResultList());
+
+        assertEquals(3, rows.size());
+        assertEquals(List.of("n80", "n81", "n82"),
+                rows.stream().map(r -> r.name).toList());
+
+        final String sql = SqlCaptureInspector.getSqls().stream()
+                .filter(q -> q.toLowerCase(Locale.ROOT).contains("for update"))
+                .reduce((a, b) -> b).orElse("");
+        assertTrue("locking wrapper 가 적용돼야 함: " + sql, sql.contains("in (select"));
+
+        // 바깥(서브쿼리 괄호 밖)에 order by 가 있어야 한다
+        final String low = sql.toLowerCase(Locale.ROOT);
+        final int open = low.indexOf('(');
+        final int close = low.lastIndexOf(')');
+        final String outer = (open >= 0 && close > open)
+                ? low.substring(0, open) + low.substring(close + 1) : low;
+        assertTrue("바깥 order by 가 없으면 순서가 실행계획에 좌우된다: " + sql,
+                outer.contains("order by"));
+    }
+
+    /**
+     * <b>정렬 없는</b> 페이징 + 비관적 락도 동작해야 한다.
+     *
+     * <p>locking wrapper 는 원본 질의의 정렬 사양을 서브쿼리와 바깥 래퍼 양쪽에 넣는다.
+     * {@code QuerySpec.getSortSpecifications()} 는 정렬이 없으면 <b>null</b> 을 돌려주므로
+     * 두 자리 모두 {@code hasSortSpecifications()} 가드가 필요하다. 한쪽이라도 빠지면
+     * {@code order by} 없는 페이징+락이 {@code NullPointerException} 으로 죽는다.
+     *
+     * <p>락을 빼면 이 경로를 타지 않으므로 <b>비관적 락이 함께 걸려야</b> 재현된다.
+     * 세 가지 페이징 형태를 모두 본다 — 셋 다 같은 자리를 지난다.
+     */
+    @Test
+    public void pagedLockedQuery_withoutOrderBy_doesNotFail() {
+        assertEquals(3, inTransactionReturning(s -> s.createQuery("from RfxRow e", Row.class)
+                .setMaxResults(3)
+                .setLockMode(LockModeType.PESSIMISTIC_WRITE)
+                .getResultList()).size());
+
+        assertFalse("setFirstResult 단독도 같은 자리를 지난다",
+                inTransactionReturning(s -> s.createQuery("from RfxRow e", Row.class)
+                        .setFirstResult(1)
+                        .setLockMode(LockModeType.PESSIMISTIC_WRITE)
+                        .getResultList()).isEmpty());
+
+        assertEquals(2, inTransactionReturning(s -> s.createQuery("from RfxRow e", Row.class)
+                .setFirstResult(1)
+                .setMaxResults(2)
+                .setLockMode(LockModeType.PESSIMISTIC_WRITE)
+                .getResultList()).size());
+    }
+
+    // ------------------------------------------------------------------
 
     private long num(String table, String col) {
         Object v = inTransactionReturning(s ->
