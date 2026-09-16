@@ -1,0 +1,5 @@
+# 배포 아카이브(GitHub "Download ZIP" · 릴리즈 tarball)에서 제외한다.
+# 저장소에는 그대로 남고, 사용자가 받는 묶음에만 들어가지 않는다.
+# git clone 에는 영향이 없다.
+dev-docs/      export-ignore
+.gitattributes export-ignore

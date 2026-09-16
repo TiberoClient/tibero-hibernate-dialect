@@ -21,7 +21,7 @@ import java.sql.Statement;
 /**
  * {@code @Struct} 와 {@code @Embedded} 가 실제로 어떻게 다른지 ps06 에서 확인한다.
  *
- * <p>{@code docs/dialect-decisions.md} 는 "Spring 앱은 대부분 {@code @Embedded} 로 충분하다"
+ * <p>{@code dev-docs/dialect-decisions.md} 는 "Spring 앱은 대부분 {@code @Embedded} 로 충분하다"
  * 고 적어두었는데, 이것이 <b>완전 대체</b>를 뜻하는지 확인이 필요했다.
  * 결론부터 — 두 어노테이션은 <b>DB 스키마 모양 자체가 다르다</b>.
  *

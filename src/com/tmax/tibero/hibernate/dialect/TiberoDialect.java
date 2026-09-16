@@ -124,7 +124,7 @@ import org.hibernate.type.spi.TypeConfiguration;
  *
  * <p>Oracle Dialect 대비 의도적으로 오버라이드하지 않은 API
  * (미지원 / 미구현 / 기본값 적합) 판단은
- * {@code docs/dialect-decisions.md} 및
+ * {@code dev-docs/dialect-decisions.md} 및
  * {@code DialectDecisionContractTest} / {@code DialectDecisionCapabilityTest} 를 본다.
  * diff만 보고 오버라이드를 추가하지 말 것.
  */
@@ -199,7 +199,7 @@ public class TiberoDialect extends Dialect {
      * 으로 두지만, 서버 파스 시간이 원소 수의 <b>제곱</b>으로 는다. 그 값은 문장을 나누지
      * 않고 {@code or} 로 이어 붙일 뿐이라 효과가 없고, 실제로 쪼개는 것은 이 값이다.
      *
-     * <p>측정치와 500 을 고른 근거는 {@code docs/dialect-decisions.md} §1.3 참고.
+     * <p>측정치와 500 을 고른 근거는 {@code dev-docs/dialect-decisions.md} §1.3 참고.
      */
     @Override
     public int getParameterCountLimit() {

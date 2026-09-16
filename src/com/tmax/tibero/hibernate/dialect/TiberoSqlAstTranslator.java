@@ -251,7 +251,7 @@ public class  TiberoSqlAstTranslator<T extends JdbcOperation> extends SqlAstTran
         // 실행계획에 좌우되는데 예외도 경고도 없어 발견이 늦다.
         //
         // ⚠️ 상류 OracleSqlAstTranslator 는 7.4.8 까지도 서브쿼리에만 넣는다. 의도적으로
-        //    다르게 가는 지점이며 근거는 docs/dialect-decisions.md §2-1 에 있다.
+        //    다르게 가는 지점이며 근거는 dev-docs/dialect-decisions.md §2-1 에 있다.
         // ⚠️ getSortSpecifications() 는 정렬이 없으면 null 이라 가드가 필요하다.
         if (querySpec.hasSortSpecifications()) {
             for (SortSpecification sortSpecification : querySpec.getSortSpecifications()) {

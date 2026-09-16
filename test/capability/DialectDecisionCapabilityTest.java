@@ -28,9 +28,9 @@ import static org.junit.Assert.*;
  * - 구현됨: @Struct · 네이티브 배열 컬럼 — 전환 시 여기 가드가 먼저 실패한다
  *
  * 실패하면 DB/드라이버/Hibernate 스펙 변경 가능성이 있으므로
- * 코드를 고치기 전에 docs/dialect-decisions.md 를 갱신한다.
+ * 코드를 고치기 전에 dev-docs/dialect-decisions.md 를 갱신한다.
  *
- * @see docs/dialect-decisions.md
+ * @see dev-docs/dialect-decisions.md
  */
 public class DialectDecisionCapabilityTest extends AbstractTiberoDialectTestBase {
 
@@ -55,10 +55,10 @@ public class DialectDecisionCapabilityTest extends AbstractTiberoDialectTestBase
         // 이 테스트는 "array 전체 미지원"의 근거가 아니다 — 아래 UDT 테스트를 함께 볼 것.
         assertNativeFails(
                 "create table DEC_ARR_T (c number array)",
-                "ANSI SQL array 미지원 판단이 깨짐 — docs/dialect-decisions.md §2 재검토");
+                "ANSI SQL array 미지원 판단이 깨짐 — dev-docs/dialect-decisions.md §2 재검토");
         assertNativeFails(
                 "create table DEC_ARR_T2 (c int array[10])",
-                "ANSI SQL array[n] 미지원 판단이 깨짐 — docs/dialect-decisions.md §2 재검토");
+                "ANSI SQL array[n] 미지원 판단이 깨짐 — dev-docs/dialect-decisions.md §2 재검토");
     }
 
     /**
@@ -70,19 +70,19 @@ public class DialectDecisionCapabilityTest extends AbstractTiberoDialectTestBase
      * {@code as table of …} 를 내고, JDBC 는 {@code createArrayOf} 로 왕복한다.
      * Tibero 가 이를 수용하므로 array 는 "미지원"이 아니라 "미구현"이다.
      *
-     * @see docs/dialect-decisions.md §1.2, §2
+     * @see dev-docs/dialect-decisions.md §1.2, §2
      */
     @Test
     public void unimplemented_oracleStyleArrayUdt_isAcceptedByTibero() {
         try {
             assertNativeOk("create or replace type DEC_VARR_T as varying array(10) of number",
-                    "Oracle식 VARRAY UDT 가 거부됨 — docs/dialect-decisions.md §1.2/§2 재검토");
+                    "Oracle식 VARRAY UDT 가 거부됨 — dev-docs/dialect-decisions.md §1.2/§2 재검토");
             assertNativeOk("create or replace type DEC_NTBL_T as table of number",
-                    "Oracle식 nested table UDT 가 거부됨 — docs/dialect-decisions.md §1.2/§2 재검토");
+                    "Oracle식 nested table UDT 가 거부됨 — dev-docs/dialect-decisions.md §1.2/§2 재검토");
             assertNativeOk("create table DEC_VARR_TBL (id number primary key, v DEC_VARR_T)",
-                    "VARRAY 를 컬럼 타입으로 쓸 수 없음 — docs/dialect-decisions.md §2 재검토");
+                    "VARRAY 를 컬럼 타입으로 쓸 수 없음 — dev-docs/dialect-decisions.md §2 재검토");
             assertNativeOk("insert into DEC_VARR_TBL values (1, DEC_VARR_T(10,20,30))",
-                    "VARRAY 생성자 리터럴 insert 실패 — docs/dialect-decisions.md §2 재검토");
+                    "VARRAY 생성자 리터럴 insert 실패 — dev-docs/dialect-decisions.md §2 재검토");
 
             Long cnt = inTransactionReturning(session -> session.createNativeQuery(
                     "select count(*) from DEC_VARR_TBL t, table(t.v)", Long.class).getSingleResult());
@@ -106,7 +106,7 @@ public class DialectDecisionCapabilityTest extends AbstractTiberoDialectTestBase
     public void unsupported_enumDomainDdl_stillRejectedByTibero() {
         assertNativeFails(
                 "create domain dec_color as enum (R, G)",
-                "enum domain 미지원 판단이 깨짐 — docs/dialect-decisions.md §1.1 재검토");
+                "enum domain 미지원 판단이 깨짐 — dev-docs/dialect-decisions.md §1.1 재검토");
     }
 
     // -------------------------------------------------------------------------
@@ -155,7 +155,7 @@ public class DialectDecisionCapabilityTest extends AbstractTiberoDialectTestBase
      * "미구현"이라는 판단을 지키는 가드였다. 지원을 넣으면서 지원 시나리오로 뒤집었다.
      *
      * <p>매핑·값 왕복까지 보는 것은 {@code capability.StructMappingTest} 다.
-     * 여기서는 {@code docs/dialect-decisions.md} 의 분류가 코드와 어긋나지 않는지만 지킨다.
+     * 여기서는 {@code dev-docs/dialect-decisions.md} 의 분류가 코드와 어긋나지 않는지만 지킨다.
      */
     @Test
     public void struct_mapping_bootsSuccessfully() throws Exception {

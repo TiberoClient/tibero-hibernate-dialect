@@ -20,9 +20,9 @@ import static org.junit.Assert.*;
  *
  * 목적:
  * - Oracle gap 중 미지원/기본값 적합/미구현 판단을 다시 하지 않도록 고정
- * - Hibernate/기본값 스펙이 바뀌면 실패 → docs/dialect-decisions.md 와 함께 보수
+ * - Hibernate/기본값 스펙이 바뀌면 실패 → dev-docs/dialect-decisions.md 와 함께 보수
  *
- * @see docs/dialect-decisions.md
+ * @see dev-docs/dialect-decisions.md
  */
 public class DialectDecisionContractTest {
 
@@ -47,7 +47,7 @@ public class DialectDecisionContractTest {
         }) {
             assertFalse(
                     name + " 은 미지원으로 Dialect 기본값을 쓴다. "
-                            + "Oracle과 맞추려 오버라이드하지 말 것. 변경 시 docs/dialect-decisions.md 갱신.",
+                            + "Oracle과 맞추려 오버라이드하지 말 것. 변경 시 dev-docs/dialect-decisions.md 갱신.",
                     TIBERO_DECLARED.contains(name));
         }
     }
@@ -133,7 +133,7 @@ public class DialectDecisionContractTest {
         }) {
             assertFalse(
                     name + " 은 기본값 적합. Oracle 값을 그대로 넣지 말 것. "
-                            + "변경 시 docs/dialect-decisions.md 갱신.",
+                            + "변경 시 dev-docs/dialect-decisions.md 갱신.",
                     TIBERO_DECLARED.contains(name));
         }
     }
@@ -173,7 +173,7 @@ public class DialectDecisionContractTest {
                         + "대량 IN 이 느린 것은 사실이나(파스가 N², 30,000개 138초) 이 값을 1000 으로 바꿔도 "
                         + "Hibernate 6.6 은 한 문장 안에서 or 로 이어붙일 뿐이라 3배밖에 못 줄인다. "
                         + "실효가 있는 쪽은 getParameterCountLimit 이며 그쪽은 500 으로 오버라이드했다. "
-                        + "docs/dialect-decisions.md §1.3 각주 참고.",
+                        + "dev-docs/dialect-decisions.md §1.3 각주 참고.",
                 0, dialect.getInExpressionCountLimit());
         assertEquals(
                 "배치 로딩은 500키씩 나눈다 — getInExpressionCountLimit 과 달리 이쪽은 실제로 문장을 쪼갠다",
