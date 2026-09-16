@@ -27,44 +27,19 @@ import static org.hibernate.type.SqlTypes.STRUCT_ARRAY;
 import static org.hibernate.type.SqlTypes.STRUCT_TABLE;
 
 /**
- * 집계(aggregate) 컬럼 — 여러 필드를 <b>컬럼 하나</b>에 담는 매핑의 SQL 조각을 만든다.
+ * 집계 컬럼 — 임베더블 여러 필드를 컬럼 하나에 담는 매핑의 SQL 조각을 만든다.
  *
- * <h2>집계 컬럼이 무엇인가</h2>
- * Hibernate 는 임베더블({@code @Embeddable})을 두 가지 방식으로 테이블에 앉힐 수 있다.
+ * <p>{@code where p.addr.city = ?} 를 SQL 로 옮기려면 "컬럼 안의 한 필드" 를 어떻게 쓰는지
+ * dialect 가 알려주어야 한다. 그 역할이다. STRUCT 계열({@code @Struct}, {@code @Struct} 배열)과
+ * JSON 집계({@code @JdbcTypeCode(JSON)})를 모두 다루고 XML 집계만 범위 밖이다.
  *
- * <pre>
- * &#64;Embedded            &#64;Struct(name = "ADDR_T")
- *   ADDR_STREET  varchar    ADDR  ADDR_T      &lt;- 컬럼 하나. DB 쪽 object 타입
- *   ADDR_CITY    varchar
- *   (컬럼으로 펼쳐짐)        (집계 컬럼)
- * </pre>
+ * <p>둘은 기계가 다르다 — STRUCT 는 {@code addr.city} 점 표기를 DB 가 네이티브로 이해하지만,
+ * JSON 은 경로로 찔러 꺼내고({@code json_value}/{@code json_query}/{@code json_table})
+ * 타입까지 되돌려야 한다. 쓰기 쪽은 성분만 바꿀 수 없어
+ * {@link TiberoJsonAggregateWriter} 가 SET 오른쪽을 통째로 그린다.
  *
- * 뒤쪽이 <b>집계 컬럼</b>이다. 컬럼은 하나인데 그 안에 필드가 여러 개 들어 있으므로,
- * {@code where p.addr.city = ?} 같은 질의를 SQL 로 옮기려면 <b>"컬럼 안의 한 필드"를
- * 어떻게 쓰는지</b>를 dialect 가 알려주어야 한다. 그 역할이 이 클래스다.
- *
- * <p>Hibernate 는 JSON · XML · STRUCT 를 모두 집계로 취급한다. 이 구현은 <b>STRUCT 계열만</b>
- * 다룬다 — JSON 집계({@code @JdbcTypeCode(JSON)} 임베더블)는 별개의 기계가 필요하고
- * 6.6.1 범위 밖이다.
- *
- * <h2>이 클래스가 없으면 무슨 일이 나는가</h2>
- * Hibernate 기본값인 {@link AggregateSupportImpl} 은 아래 훅들이 전부
- * {@code UnsupportedOperationException} 을 던진다. 그래서 {@code @Struct} 엔티티가 하나라도
- * 있으면 <b>SessionFactory 기동 자체가 실패</b>했다.
- *
- * <pre>
- * UnsupportedOperationException: Dialect does not support
- *   aggregateComponentAssignmentExpression: org.hibernate.dialect.aggregate.AggregateSupportImpl
- * </pre>
- *
- * <h2>왜 이렇게 짧은가</h2>
- * Hibernate 의 {@code OracleAggregateSupport} 는 566 줄이지만 <b>그중 STRUCT 분기는 6 줄</b>이고
- * 나머지는 전부 JSON 집계 기계다(버전별 {@code JsonSupport} 판정, 타입별 강제변환).
- * STRUCT 는 DB 가 {@code obj.field} 표기를 네이티브로 이해하므로 문자열을 이어붙이면 끝난다.
- *
- * @see com.tmax.tibero.hibernate.type.TiberoStructJdbcType  값을 실제로 바인딩·추출하는 쪽
- * @see com.tmax.tibero.hibernate.dialect.TiberoSqlAstTranslator#visitSetAssignment
- *      UPDATE 의 SET 대상을 렌더하는 쪽 — 여기서 만든 식만으로는 부족해 함께 손봐야 했다
+ * <p>기본값 {@link AggregateSupportImpl} 은 관련 훅에서 예외를 던지므로, 이 클래스가 없으면
+ * 집계 엔티티가 하나라도 있을 때 SessionFactory 기동이 실패한다.
  */
 public class TiberoAggregateSupport extends AggregateSupportImpl {
 
@@ -203,41 +178,6 @@ public class TiberoAggregateSupport extends AggregateSupportImpl {
 
     /**
      * JSON 배열을 VARRAY 로 되돌리는 식 — <b>Oracle 과 방식이 다르다</b>.
-     *
-     * <h2>왜 Oracle 방식을 못 쓰나</h2>
-     * Oracle 은 {@code json_value(w,'$.tags' returning StringArray)} 로 한 번에 꺼내지만
-     * Tibero 는 {@code json_value} 의 {@code returning} 에 UDT 를 못 쓴다. 그렇다고
-     * 캐스팅으로 우회할 수도 없다.
-     *
-     * <pre>
-     * json_value(w,'$.tags' returning StringArray)   JDBC-8004  Syntax error
-     * cast(json_value(w,'$.tags') as StringArray)    JDBC-11021 Error occurred during type casting
-     * </pre>
-     *
-     * <p>대신 {@code json_table} 로 배열을 <b>행으로 펼친 뒤</b> {@code multiset} 으로 모아
-     * VARRAY 로 캐스팅한다. 이건 동작한다.
-     *
-     * <pre>
-     * cast(multiset(select jt.v from json_table(w,'$.tags[*]'
-     *                 columns (v varchar2(4000) path '$')) jt) as StringArray)
-     *   → StringArray('a','b')
-     * </pre>
-     *
-     * <h2>왜 원소를 전부 {@code varchar2(4000)} 으로 읽나</h2>
-     * 바깥 {@code cast} 가 VARRAY 의 진짜 원소 타입으로 다시 변환해 주기 때문이다
-     * (ps06 실측 — {@code NumberArray}, {@code DoubleArray} 모두 정상). 덕분에 원소 타입별
-     * DDL 이름을 따로 알아낼 필요가 없다. 이 훅에는 {@code TypeConfiguration} 이 넘어오지
-     * 않아 원소 타입 이름을 계산하기가 번거로운데, 그 문제를 통째로 피한다.
-     *
-     * <p>키가 없으면 빈 VARRAY 가 나온다 — 예외가 아니다.
-     *
-     * <p>원소가 boolean 인 배열만 예외로 {@code decode} 를 한 겹 두른다. JSON 에는 참/거짓이
-     * 들어 있지만 VARRAY 원소는 {@code number(1,0)} 이라 그대로 캐스팅하면
-     * {@code JDBC-5074 Given string does not represent a number in proper format} 이 난다.
-     * 원소 타입은 {@link #elementSqlTypeCodeOf(Column)} 으로 알아낸다.
-     *
-     * <p>실측으로 {@code String[]} · {@code Integer[]} · {@code Double[]} · {@code LocalDate[]} ·
-     * {@code Boolean[]} 다섯 가지가 읽기·쓰기 양쪽 모두 왕복함을 확인했다.
      */
     private static String arrayReadExpression(String parent, String columnExpression, Column column) {
         final String element = elementSqlTypeCodeOf(column) == SqlTypes.BOOLEAN
@@ -358,51 +298,6 @@ public class TiberoAggregateSupport extends AggregateSupportImpl {
 
     /**
      * {@code @Struct} 임베더블의 <b>배열</b> 필드에 필요한 VARRAY 타입을 등록한다.
-     *
-     * <h2>무엇을 가능하게 하나</h2>
-     * {@code @Struct} 값 객체를 배열로 가진 필드({@code Address[] stops})를 object UDT 의
-     * VARRAY 컬럼 하나에 담는다.
-     *
-     * <pre>
-     * create type SMT_ADDR      as object (city varchar2(255), zip number(10,0))
-     * create type SMT_ADDRArray as varying array(127) of SMT_ADDR   &lt;- 이 줄이 여기서 나온다
-     * create table TRIP (id number(19,0), stops SMT_ADDRArray)
-     * </pre>
-     *
-     * <h2>왜 여기서 등록하나</h2>
-     * 보통 배열 컬럼의 UDT 는 {@code TiberoArrayJdbcType.addAuxiliaryDatabaseObjects} 가
-     * 등록한다. 그런데 <b>요소가 struct 이면 그쪽은 등록을 건너뛴다</b> — 그 시점에는
-     * 요소 object 타입의 이름을 알 수 없기 때문이다. 요소 타입 이름은 집계 매핑을 다 읽고
-     * 나야 정해지므로 {@code AggregateSupport} 가 맡는 것이 맞다. Oracle 도 같은 구조이며
-     * {@code OracleArrayJdbcType} 에 <i>"OracleAggregateSupport will take care of
-     * contributing the auxiliary database object"</i> 라는 주석으로 남아 있다.
-     *
-     * <h2>Tibero 지원 실측</h2>
-     * object 타입의 VARRAY 는 전부 동작한다(ps06).
-     *
-     * <pre>
-     * create type SA_OBJ as object (a number, b varchar2(20))            OK
-     * create type SA_ARR as varying array(10) of SA_OBJ                  OK
-     * create table SA_T (id number, v SA_ARR)                            OK
-     * insert into SA_T values (1, SA_ARR(SA_OBJ(1,'x'), SA_OBJ(2,'y')))  OK
-     * select ... from SA_T t, table(t.v) e where e.a = 1                 OK
-     * </pre>
-     *
-     * <h2>⚠️ {@code STRUCT_TABLE}(nested table)은 등록하지 않는다</h2>
-     * Oracle 은 여기서 {@code STRUCT_TABLE} 도 함께 처리하지만 <b>Tibero 는 nested table 을
-     * 컬럼 타입으로 받지 않는다.</b> 타입 선언까지는 되는데 컬럼으로 쓰면 거부한다(실측).
-     *
-     * <pre>
-     * create type NTA as table of number                  OK
-     * create table T (id number, v NTA)                   FAIL  JDBC-7002 Unsupported DDL
-     * create table T (v NTA) nested table v store as S    FAIL  JDBC-7002 Unsupported DDL
-     * </pre>
-     *
-     * 등록해봐야 쓸 수 없는 DDL 이 나가므로 <b>일부러 {@code STRUCT_ARRAY} 만</b> 처리한다.
-     * {@code STRUCT_TABLE} 은 타입이 만들어지지 않아 부팅 단계에서 드러나는데,
-     * 조용히 잘못 도는 것보다 낫다.
-     *
-     * @see com.tmax.tibero.hibernate.type.TiberoArrayJdbcType#addAuxiliaryDatabaseObjects
      */
     @Override
     public List<AuxiliaryDatabaseObject> aggregateAuxiliaryDatabaseObjects(

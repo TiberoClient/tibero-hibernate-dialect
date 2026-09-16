@@ -174,13 +174,26 @@ public class TypeSystemTest extends AbstractTiberoDialectTestBase {
         assertEquals(SqlTypes.INTERVAL_SECOND, t.getJdbcTypeCode());
     }
 
+    /**
+     * {@code number(1,0)} 을 BOOLEAN 으로 보면 안 된다.
+     *
+     * <p>예전에는 BOOLEAN 을 돌려줬다. DDL 방향(boolean → number(1,0))과 대칭이라
+     * 자연스러워 보이지만, DB 쪽 범위가 더 넓어 <b>예외 없이 값이 바뀐다</b> —
+     * 컬럼에 든 {@code 7} 을 읽으면 {@code true} 가 됐다(ps06 실측).
+     */
     @Test
     public void resolve_NUMERIC_scale0_precision1_shouldReturnInteger_notBoolean() {
         JdbcType t = dialect.resolveSqlTypeDescriptor("number", SqlTypes.NUMERIC, 1, 0, jdbcTypeRegistry);
         assertNotNull(t);
-        assertEquals(SqlTypes.INTEGER, t.getJdbcTypeCode());
+        assertEquals("number(1,0) 은 -9~9 라 BOOLEAN 으로 좁히면 7 이 true 가 된다",
+                SqlTypes.INTEGER, t.getJdbcTypeCode());
     }
 
+    /**
+     * {@code number(3,0)} 을 TINYINT 로 좁히면 안 된다 — TINYINT 는 -128~127 인데
+     * {@code number(3,0)} 은 -999~999 다. 200 을 읽으면 {@code JDBC-590749} 가 난다.
+     * Oracle 도 같은 이유로 이 추론을 거부한다.
+     */
     @Test
     public void resolve_NUMERIC_scale0_precision3_shouldReturnInteger_notTinyint() {
         JdbcType t = dialect.resolveSqlTypeDescriptor("number", SqlTypes.NUMERIC, 3, 0, jdbcTypeRegistry);
@@ -188,6 +201,10 @@ public class TypeSystemTest extends AbstractTiberoDialectTestBase {
         assertEquals(SqlTypes.INTEGER, t.getJdbcTypeCode());
     }
 
+    /**
+     * {@code number(5,0)} 을 SMALLINT 로 좁히면 안 된다 — SMALLINT 는 -32768~32767 인데
+     * {@code number(5,0)} 은 -99999~99999 다. 50000 을 읽으면 {@code JDBC-590749} 가 난다.
+     */
     @Test
     public void resolve_NUMERIC_scale0_precision5_shouldReturnInteger_notSmallint() {
         JdbcType t = dialect.resolveSqlTypeDescriptor("number", SqlTypes.NUMERIC, 5, 0, jdbcTypeRegistry);
@@ -198,16 +215,9 @@ public class TypeSystemTest extends AbstractTiberoDialectTestBase {
     /**
      * ⚠️ {@code precision == 0} 은 정수로 좁히면 안 된다.
      *
-     * <p>tbjdbc 는 <b>맨 집계</b>의 precision 을 0 으로 보고한다
-     * ({@code count(*)} · {@code sum} · {@code avg} 전부 {@code precision=0 scale=0}).
-     * {@code precision != 0} 가드를 조건 안쪽에 두면 0 이 {@code <= 19} 에 걸려
-     * BIGINT 가 되고, {@code select avg(v)} 가 3.5 대신 3 으로 깎인다 —
-     * 고치려던 것과 같은 유형의 조용한 손실을 새로 만드는 셈이다.
-     *
-     * <p>나눗셈 결과({@code avg(7)/2})는 precision 을 38 로 보고해 이 분기를 타지
-     * 않으므로 가드 위치 검증에 쓸 수 없다. 값 왕복 쪽은
-     * {@code capability.ReviewFixRegressionTest#aggregatePrecisionZero_keepsDecimalPrecision}
-     * 이 맡는다.
+     * <p>tbjdbc 는 맨 집계의 precision 을 0 으로 보고한다. {@code precision != 0} 가드를
+     * 조건 안쪽에 두면 0 이 {@code <= 19} 에 걸려 BIGINT 가 되고 {@code avg} 의 소수가 깎인다.
+     * 값 왕복 쪽은 {@code capability.ReviewFixRegressionTest} 가 맡는다.
      */
     @Test
     public void resolve_NUMERIC_precision0_staysNumeric_forAggregates() {

@@ -8,12 +8,31 @@ import org.hibernate.dialect.pagination.AbstractLimitHandler;
 import org.hibernate.query.spi.Limit;
 import org.hibernate.query.spi.QueryOptions;
 
+/**
+ * 페이징(`setFirstResult` / `setMaxResults`)을 SQL 로 옮긴다.
+ *
+ * <p>⚠️ <b>rownum 분기를 잉여로 보고 걷어내면 안 된다.</b> {@code TiberoSqlAstTranslator} 의
+ * locking wrapper 는 HQL/SQM 경로만 덮는다. 네이티브 질의는 이 클래스가 유일한 방어선이고,
+ * 무상태 offset/fetch 구현으로 바꾸면 아래가 나가 깨진다(실측).
+ *
+ * <pre>
+ * select id from T order by id for update fetch first 2 rows only   FAIL  JDBC-8022
+ * </pre>
+ */
 public class TiberoLimitHandler extends AbstractLimitHandler {
 
     private boolean bindLimitParametersInReverseOrder;
     private boolean useMaxForLimit;
     private boolean supportOffset;
 
+    /**
+     * @deprecated 공유 싱글턴은 쓰지 말 것. 이 클래스는 {@code processSql} 에서 위 세 플래그를
+     *             매번 덮어쓰고, 호출자({@code DeferredResultSetAccess})는 SQL 을 만든 뒤
+     *             <b>나중에</b> 바인딩 시점에 그 값을 읽는다. 그 사이 다른 스레드가 같은
+     *             인스턴스에 {@code processSql} 을 부르면 플래그가 뒤집혀 예외 없이 다른
+     *             페이지가 나온다. {@code TiberoDialect.getLimitHandler()} 는 호출마다
+     *             새 인스턴스를 돌려준다.
+     */
     @Deprecated
     public static final TiberoLimitHandler INSTANCE = new TiberoLimitHandler();
 

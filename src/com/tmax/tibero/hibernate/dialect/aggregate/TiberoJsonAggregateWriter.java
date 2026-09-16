@@ -16,51 +16,6 @@ import java.util.Map;
 
 /**
  * JSON 집계 컬럼의 <b>UPDATE 오른쪽 전체</b>를 만든다.
- *
- * <h2>왜 통째로 만드는가</h2>
- * STRUCT 는 {@code set t.addr.city = ?} 처럼 성분 하나만 콕 집어 바꿀 수 있다. JSON 은
- * 그럴 수 없다 — 컬럼에 담긴 것은 문자열 한 덩어리라 <b>객체를 새로 만들어 덮어써야</b> 한다.
- * 그래서 Hibernate 는 JSON 집계에 한해 dialect 에게 "SET 오른쪽을 네가 전부 그려라"라고
- * 맡기고({@code requiresAggregateCustomWriteExpressionRenderer}), 그 렌더러가 이 클래스다.
- *
- * <p>바꿀 필드만 담은 작은 JSON 을 만들어 원본에 <b>머지패치</b>한다.
- *
- * <pre>
- * update PERSON t set t.addr = json_mergepatch(
- *     nvl(t.addr, json_query('{}','$' returning json)),   &lt;- 컬럼이 null 일 때의 바닥
- *     json_object('city':?, 'zip':? returning json)       &lt;- 바꿀 것만
- *     returning json)
- * </pre>
- *
- * <p><b>머지패치</b>(RFC 7386)는 "덮어쓸 조각"을 원본에 적용하는 표준 연산이다.
- * {@code {"a":1,"b":2}} 에 {@code {"b":9}} 를 적용하면 {@code {"a":1,"b":9}} 가 된다 —
- * 건드리지 않은 필드는 보존된다. 중첩 객체도 재귀적으로 병합된다.
- *
- * <h2>Oracle 과 다른 세 지점</h2>
- * Oracle 구현을 그대로 베끼면 Tibero 에서 셋 다 깨진다. 전부 실측으로 확인하고 대체했다.
- *
- * <pre>
- * ① coalesce(&lt;json 컬럼&gt;, …)          JDBC-11022 Values are from incompatible data types
- *    → nvl(…)                          OK
- *
- * ② json_object(returning json)        JDBC-8004 Syntax error   (빈 객체를 못 만든다)
- *    → json_query('{}','$' returning json)   OK
- *
- * ③ json_object('d': &lt;date 값&gt;)        {"d":"2024/03/05"}  ← NLS 형식, ISO 가 아니다
- *    → to_char(…, 'YYYY-MM-DD')        {"d":"2024-03-05"}  OK
- * </pre>
- *
- * ③이 가장 위험했다. 예외가 나지 않고 <b>조용히 잘못된 형식</b>으로 저장되는데, 나중에
- * 읽을 때 {@code JDBC-5089} 로 깨지거나 엔티티 로드가 통째로 실패한다. Java 쪽 직렬화
- * ({@code JsonHelper})는 ISO-8601 을 쓰는데 Tibero 의 {@code json_object} 는 자체 형식을
- * 쓰기 때문에, 두 경로가 어긋나면 <b>한쪽으로 쓴 값을 다른 쪽으로 못 읽는다.</b>
- *
- * <h2>이 렌더러가 쓰이는 범위</h2>
- * <b>HQL / Criteria 의 벌크 UPDATE 에서만</b> 불린다. 일반 엔티티 flush 는 집계 컬럼을
- * 통째로 바인딩한다({@code update PERSON set addr=?, name=? where id=?}). 즉 위 ③의 결함은
- * {@code update Person p set p.addr.since = ?} 같은 HQL 에서만 나타난다.
- *
- * @see TiberoAggregateSupport#aggregateCustomWriteExpressionRenderer
  */
 final class TiberoJsonAggregateWriter {
 
@@ -291,32 +246,6 @@ final class TiberoJsonAggregateWriter {
 
     /**
      * 배열 필드를 JSON 배열로 만드는 식 — <b>Oracle 에는 없는 보강</b>.
-     *
-     * <h2>무엇이 문제였나</h2>
-     * 배열 필드를 그대로 {@code json_object} 에 넘기면 Tibero 가 거부한다.
-     *
-     * <pre>
-     * json_object('tags':cast(? as StringArray) returning json)
-     *   → JDBC-11003 Invalid function argument type
-     * </pre>
-     *
-     * <p>배열 UDT 를 행 집합으로 펼친 뒤 {@code json_arrayagg} 로 다시 모으면 된다.
-     *
-     * <pre>
-     * json_object('tags':(select json_arrayagg(t.column_value) from table(?) t) returning json)
-     *   → {"tags":["a","b"]}
-     * </pre>
-     *
-     * <h2>Oracle 은 왜 이게 없나</h2>
-     * Oracle 도 {@code json_arrayagg} 를 쓰지만 <b>원소가 CLOB 이나 boolean 일 때만</b>이다
-     * ({@code OracleAggregateSupport.jsonCustomWriteExpression} 의 {@code case ARRAY} 는
-     * 그 둘 외에는 {@code default: break} 로 빠져나가 바인드를 날것으로 넘긴다).
-     * Oracle 은 그래도 동작하므로 문제가 드러나지 않았을 뿐이고, Tibero 는 드러난다.
-     * 그래서 <b>모든 원소 타입</b>에 대해 감싼다.
-     *
-     * <p>원소 하나하나에는 스칼라와 <b>같은 규칙</b>을 적용한다 — 날짜면 {@code to_char} 로
-     * ISO 를 강제하고, number 로 앉은 boolean 이면 {@code decode} 로 JSON 의 참/거짓 표기로
-     * 바꾼다. 그래야 배열 원소와 스칼라 필드의 표현이 어긋나지 않는다.
      */
     private static String arrayWriteExpression(SelectableMapping column, String writeExpression,
                                                TypeConfiguration typeConfiguration) {

@@ -246,6 +246,13 @@ public class  TiberoSqlAstTranslator<T extends JdbcOperation> extends SqlAstTran
         }
         lockingWrapper.applyPredicate(new InSubQueryPredicate(idExpression, subquery, false));
 
+        // 바깥 래퍼에도 정렬 사양을 복사한다. 서브쿼리의 정렬은 "어떤 행을 고를지",
+        // 바깥의 정렬은 "어떤 순서로 돌려줄지" 라 역할이 다르다. 바깥이 없으면 행 순서가
+        // 실행계획에 좌우되는데 예외도 경고도 없어 발견이 늦다.
+        //
+        // ⚠️ 상류 OracleSqlAstTranslator 는 7.4.8 까지도 서브쿼리에만 넣는다. 의도적으로
+        //    다르게 가는 지점이며 근거는 docs/dialect-decisions.md §2-1 에 있다.
+        // ⚠️ getSortSpecifications() 는 정렬이 없으면 null 이라 가드가 필요하다.
         if (querySpec.hasSortSpecifications()) {
             for (SortSpecification sortSpecification : querySpec.getSortSpecifications()) {
                 lockingWrapper.addSortSpecification(sortSpecification);
@@ -254,6 +261,14 @@ public class  TiberoSqlAstTranslator<T extends JdbcOperation> extends SqlAstTran
         return lockingWrapper;
     }
 
+    /**
+     * FROM 절 파생 테이블의 컬럼 별칭을 서브쿼리 안쪽으로 옮긴다.
+     *
+     * <pre>
+     * select x from (select 1 from dual) t(x)   FAIL  JDBC-8022   (기본 구현이 내는 형태)
+     * select x from (select 1 x from dual) t    OK
+     * </pre>
+     */
     @Override
     public void visitQueryPartTableReference(QueryPartTableReference tableReference) {
         emulateQueryPartTableReferenceColumnAliasing(tableReference);
@@ -353,27 +368,15 @@ public class  TiberoSqlAstTranslator<T extends JdbcOperation> extends SqlAstTran
     }
 
     /**
-     * UPDATE 의 SET 왼쪽을 렌더할 때 <b>테이블 별칭을 함께</b> 낸다.
+     * UPDATE 의 SET 왼쪽에 테이블 별칭을 함께 낸다.
      *
-     * <p>Hibernate 기본 구현({@code AbstractSqlAstTranslator.appendAssignmentColumn})은
-     * {@code appendColumnForWrite(this, null)} 로 <b>한정자를 버리고</b> 컬럼명만 낸다.
-     * 보통 컬럼이라면 그래도 되지만, {@code @Struct} 집계 컬럼의 필드를 갱신할 때는
-     * Tibero 가 별칭 없는 점 표기를 식별자로 해석하지 못한다.
+     * <p>기본 구현은 한정자를 버리고 컬럼명만 내는데, {@code @Struct} 집계 컬럼의 필드는
+     * 별칭이 없으면 Tibero 가 식별자로 해석하지 못한다.
      *
      * <pre>
-     * update PERSON p1_0 set addr.city='Busan'        FAIL  JDBC-8026 Invalid identifier
+     * update PERSON p1_0 set addr.city='Busan'        FAIL  JDBC-8026
      * update PERSON p1_0 set p1_0.addr.city='Busan'   OK
      * </pre>
-     *
-     * <p>Hibernate {@code OracleSqlAstTranslator} 도 <b>같은 이유로 이 메서드를 재정의</b>하며,
-     * 인자 없는 {@code appendColumnForWrite(this)} 오버로드를 써서 컬럼이 자기 한정자를
-     * 쓰도록 한다. 본문은 기본 구현과 그 한 줄만 다르다.
-     *
-     * <p>집계 컬럼이 없는 보통 UPDATE 에도 별칭이 붙지만 의미는 같다 —
-     * {@code update T t set t.c=?} 는 Tibero 가 정상 수용한다.
-     *
-     * @see com.tmax.tibero.hibernate.dialect.aggregate.TiberoAggregateSupport#aggregateComponentAssignmentExpression
-     *      {@code addr.city} 까지를 만드는 쪽. 앞의 별칭은 여기서 붙는다
      */
     @Override
     protected void visitSetAssignment(Assignment assignment) {
@@ -416,19 +419,13 @@ public class  TiberoSqlAstTranslator<T extends JdbcOperation> extends SqlAstTran
     /**
      * 정수 나눗셈을 {@code floor} 로 감싼다.
      *
-     * <p>Tibero 는 Oracle 과 같이 {@code 5/2} 를 <b>2.5</b> 로 돌려준다(실측).
-     * HQL 에서 양쪽이 정수 타입이면 결과도 정수여야 하므로 그대로 두면
-     * <b>예외 없이 조용히 틀린 값</b>이 쌓인다 — 이번 6.6 작업에서 찾은 결함 중
-     * 성격이 가장 나쁜 유형이다.
-     *
      * <pre>
      * select 5/2 from dual         → 2.5   (그대로 두면)
-     * select floor(5/2) from dual  → 2     (보정 후)
+     * select floor(5/2) from dual  → 2
      * </pre>
      *
-     * <p>{@code isIntegerDivisionEmulationRequired} 가 양쪽 피연산자의 JDBC 타입이
-     * 모두 정수인 {@code DIVIDE_PORTABLE} 연산만 골라내므로, 실수 나눗셈은 영향받지 않는다.
-     * Oracle 번역기와 같은 형태다.
+     * <p>HQL 에서 양쪽이 정수면 결과도 정수여야 하는데, 보정하지 않으면 예외 없이
+     * 조용히 틀린 값이 쌓인다. {@code portable_integer_division} 이 켜졌을 때만 적용된다.
      */
     @Override
     public void visitBinaryArithmeticExpression(BinaryArithmeticExpression arithmeticExpression) {
@@ -441,41 +438,18 @@ public class  TiberoSqlAstTranslator<T extends JdbcOperation> extends SqlAstTran
     /**
      * LOB 컬럼 비교를 {@code dbms_lob.compare} 로 바꾼다.
      *
-     * <p>Tibero 는 CLOB · NCLOB · BLOB 을 {@code =} 나 {@code <} 로 비교할 수 없다.
-     *
      * <pre>
-     * where cl = 'hello'                        → JDBC-11023 Values are from data types
-     *                                             that cannot be compared.
-     * where 0 = dbms_lob.compare(cl, 'hello')   → OK   (실측)
+     * where cl = 'hello'                        → JDBC-11023
+     * where 0 = dbms_lob.compare(cl, 'hello')   → OK
      * </pre>
      *
-     * <p>{@code dbms_lob.compare} 는 <b>-1 / 0 / +1</b> 을 돌려준다(실측). 그래서 원래
-     * 비교식 {@code lhs <op> rhs} 를 <b>{@code 0 <역방향op> compare(lhs, rhs)}</b> 로
-     * 바꾸면 모든 비교 연산자를 그대로 표현할 수 있다.
+     * <p>{@code compare} 가 -1 / 0 / +1 을 돌려주므로 {@code lhs <op> rhs} 를
+     * {@code 0 <역방향op> compare(lhs, rhs)} 로 바꾸면 비교 연산자 6종을 전부 표현할 수 있다.
      *
-     * <pre>
-     * lhs =  rhs   →   0 =  compare(lhs, rhs)
-     * lhs &lt;&gt; rhs   →   0 &lt;&gt; compare(lhs, rhs)
-     * lhs &lt;  rhs   →   0 &gt;  compare(lhs, rhs)     (compare 가 음수)
-     * lhs &gt;  rhs   →   0 &lt;  compare(lhs, rhs)     (compare 가 양수)
-     * </pre>
+     * <p>⚠️ Oracle 은 {@code NOT_EQUAL} 을 {@code -1=} 로 내는데 그러면 앞쪽이 더 큰 경우
+     * ({@code +1})를 놓친다. 여기서는 {@code 0<>} 를 쓴다 — 일부러 다른 지점이다.
      *
-     * <p><b>Oracle 번역기와 일부러 다른 지점</b> — Oracle 은 {@code NOT_EQUAL} 을
-     * {@code -1=} 로 낸다. 그런데 앞쪽이 <i>더 큰</i> 경우 {@code compare} 가 {@code +1}
-     * 을 돌려주므로 그 행을 놓친다. 실제로 {@code 'world' <> 'hello'} 가 0건으로 나오는
-     * 것을 실측으로 확인했다. {@code 0<>} 로 바꾸면 양쪽 모두 잡힌다.
-     *
-     * <p><b>다루지 않는 것</b>
-     * <ul>
-     *   <li>{@code DISTINCT_FROM} / {@code NOT_DISTINCT_FROM} — {@code compare} 는 한쪽이
-     *       null 이면 null 을 돌려줘서 널 안전 비교를 이 관용구만으로는 만들 수 없다.
-     *       기본 구현에 맡긴다.</li>
-     *   <li><b>SQLXML</b> — Oracle 은 {@code existsnode(xmldiff(…))} 로 우회하지만
-     *       Tibero 에는 두 함수가 없다({@code JDBC-8036} 실측).</li>
-     *   <li><b>ARRAY</b> — Oracle 은 exporter 가 만든 {@code <타입>_cmp} PL/SQL 을
-     *       호출하는데, 그 헬퍼 계열이 Tibero 서버를 멈추게 해 우리는 생성하지 않는다.</li>
-     * </ul>
-     * 뒤의 둘은 우리가 만들 수 있는 우회가 없어 남겨둔 한계이며 문서에 기록돼 있다.
+     * <p>널 안전 비교 · SQLXML · ARRAY 는 우회 수단이 없어 기본 구현에 맡긴다.
      */
     @Override
     protected void renderComparison(Expression lhs, ComparisonOperator operator, Expression rhs) {
@@ -527,23 +501,12 @@ public class  TiberoSqlAstTranslator<T extends JdbcOperation> extends SqlAstTran
     /**
      * UNION 가지 안에 {@code order by} 만 있을 때 {@code offset 0 rows} 를 끼운다.
      *
-     * <p>집합 연산의 각 가지에 정렬만 붙으면 Tibero 가 문장을 거부한다.
-     *
      * <pre>
-     * (select a from T order by a) union all (select a from U)
-     *   → JDBC-8013 Missing SELECT keyword.
-     *
-     * (select a from T order by a offset 0 rows) union all (select a from U)
-     *   → OK   (실측)
+     * (select a from T order by a) union all (select a from U)            → JDBC-8013
+     * (select a from T order by a offset 0 rows) union all (select a …)   → OK
      * </pre>
      *
-     * <p>{@code offset 0 rows} 는 행을 하나도 건너뛰지 않으므로 결과가 달라지지 않는다.
-     * 파서에게 "이 정렬은 이 가지에 속한다"고 알려 주는 역할만 한다. Oracle 도 같은 이유로
-     * 같은 보정을 넣는다.
-     *
-     * <p>보정 대상은 <b>부모가 QueryGroup 이고, 정렬은 있는데 offset/fetch 는 없는</b>
-     * 가지로 한정한다. 루트 쿼리이면서 {@code setMaxResults} 가 걸린 경우는 바깥에서
-     * 페이징이 렌더되므로 제외한다.
+     * <p>{@code offset 0 rows} 는 행을 건너뛰지 않으므로 결과가 달라지지 않는다.
      */
     @Override
     public void visitOffsetFetchClause(QueryPart queryPart) {
@@ -568,23 +531,13 @@ public class  TiberoSqlAstTranslator<T extends JdbcOperation> extends SqlAstTran
     /**
      * {@code (values …)} 테이블 참조를 {@code select … from dual union all …} 로 편다.
      *
-     * <p>Tibero 는 VALUES 를 테이블처럼 참조하지 못한다.
-     *
      * <pre>
-     * select * from (values (1,2),(3,4))   → JDBC-8013 Missing SELECT keyword.
-     * merge into T t using (values (1)) s  → JDBC-8013
+     * select * from (values (1,2),(3,4))   → JDBC-8013
      * </pre>
      *
-     * <p>흔히 오해하는 지점 — <b>INSERT 의 다중 VALUES 는 Tibero 가 그대로 받는다</b>
-     * ({@code insert into T values (1),(2)} 실측 OK). 못 받는 것은 <b>테이블 참조로 쓰는
-     * VALUES</b> 뿐이라 {@code visitValuesList} 는 손대지 않고 이쪽만 재정의한다.
-     *
-     * <p>기본 구현 {@code emulateValuesTableReferenceColumnAliasing} 이 각 행을
-     * {@code select … from dual} 로 바꾸고 {@code union all} 로 잇는다. Oracle 도
-     * 23c 미만에서 같은 함수를 쓴다.
-     *
-     * <p>MERGE 의 {@code using} 절은 이미 {@code renderMergeSource} 가 직접 렌더하고
-     * 있어 이 경로를 타지 않는다. 남은 노출 범위는 그 밖의 자리다.
+     * <p>⚠️ {@code insert into T values (1),(2)} 처럼 <b>INSERT 의 다중 VALUES 는 Tibero 가
+     * 그대로 받는다.</b> 못 받는 것은 테이블 참조로 쓰는 VALUES 뿐이라
+     * {@code visitValuesList} 는 손대지 않는다.
      */
     @Override
     public void visitValuesTableReference(ValuesTableReference tableReference) {
@@ -594,16 +547,10 @@ public class  TiberoSqlAstTranslator<T extends JdbcOperation> extends SqlAstTran
     /**
      * {@code partition by} 에 리터럴이 오면 빈 괄호 대신 리터럴을 그대로 낸다.
      *
-     * <p>Hibernate 기본 구현(과 Oracle 재정의)은 파티션 식이 리터럴이면 {@code ()} 를
-     * 내보낸다. Oracle 은 그 형태를 받지만 Tibero 는 받지 않는다.
-     *
      * <pre>
-     * over (partition by ())   → JDBC-8013 Missing SELECT keyword.
-     * over (partition by 1)    → OK   (실측)
+     * over (partition by ())   → JDBC-8013   (기본 구현과 Oracle 재정의가 내는 형태)
+     * over (partition by 1)    → OK
      * </pre>
-     *
-     * <p>그래서 리터럴 분기만 빼고 나머지는 기본 구현과 같게 둔다.
-     * {@code rollup}/{@code cube} 같은 {@link Summarization} 은 기본 구현과 동일하게 처리한다.
      */
     @Override
     protected void renderPartitionItem(Expression expression) {

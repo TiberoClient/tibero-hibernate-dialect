@@ -17,43 +17,6 @@ import java.sql.SQLException;
 
 /**
  * {@code @Struct} 임베더블 값을 JDBC 로 넣고 빼는 방식.
- *
- * <h2>무엇을 상속하는가</h2>
- * Hibernate 의 {@link org.hibernate.dialect.StructJdbcType} 은 <b>드라이버 중립 구현</b>이다.
- * 표준 {@link java.sql.Connection#createStruct} 와 {@link java.sql.ResultSet#getObject} 만
- * 쓰므로 원칙적으로 어느 드라이버에서나 동작한다. 실제로 Tibero 에서도 <b>대부분 그대로 동작했고</b>,
- * 이 클래스는 tbjdbc 가 표준과 다르게 구는 <b>두 지점만</b> 덮어쓴다.
- *
- * <p>Oracle 도 같은 이유로 파생 클래스를 둔다({@code OracleBaseStructJdbcType}) — 다만
- * Oracle 은 자기 드라이버 타입({@code TIMESTAMPTZ}) 변환 때문이고, 우리는 아래 두 가지 때문이다.
- *
- * <h2>덮어쓴 것 1 — null 바인딩</h2>
- * 임베더블 필드가 {@code null} 인 엔티티를 저장하면 Hibernate 의 기본 바인더가
- * {@code setNull(index, Types.STRUCT)} 를 호출하는데 tbjdbc 가 이를 거부한다(실측).
- *
- * <pre>
- * setNull(i, Types.STRUCT, "ADDR_T")   OK
- * setNull(i, Types.STRUCT)             FAIL  JDBC-590703 Unsupported data type. - OBJECT
- * setNull(i, Types.OTHER)              FAIL  JDBC-590704 Unsupported SQL type. - 1111
- * setObject(i, null)                   FAIL  JDBC-11022  Values are from incompatible data types.
- * </pre>
- *
- * 그래서 {@code doBindNull} 에서 <b>UDT 이름을 함께</b> 넘긴다.
- *
- * <h2>덮어쓴 것 2 — 중첩 {@code @Struct}</h2>
- * {@code @Struct} 안에 또 {@code @Struct} 가 있으면 Hibernate 는 안쪽 값을
- * {@code ValueBinder.getBindValue()} 로 가져가는데, 기본 구현이 도메인 객체를 그대로 돌려주어
- * {@code Object[]} 가 넘어간다. tbjdbc 는 중첩 속성 자리에 {@link java.sql.Struct} 를 요구한다.
- *
- * <pre>
- * JDBC-90651: Failed to convert given data. - elementType=OBJECT,attribute=[Ljava.lang.Object;
- * </pre>
- *
- * <p>생 JDBC 로 {@code createStruct} 를 중첩해 넣는 것은 <b>정상 동작하므로 드라이버 한계가
- * 아니다.</b> {@code getBindValue} 가 {@code createJdbcValue} 를 타도록 바꾸면 해결된다.
- * Oracle 도 정확히 같은 오버라이드를 갖고 있다.
- *
- * @see com.tmax.tibero.hibernate.dialect.aggregate.TiberoAggregateSupport  SQL 조각을 만드는 쪽
  */
 public class TiberoStructJdbcType extends org.hibernate.dialect.StructJdbcType {
 

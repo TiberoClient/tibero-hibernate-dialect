@@ -56,6 +56,17 @@ public class LimitHandlerTest extends AbstractTiberoDialectTestBase {
     // ------------------------------------------------------------------------
     // 1) Dialect wiring
     // ------------------------------------------------------------------------
+    /**
+     * 호출마다 <b>새 인스턴스</b>를 돌려주어야 한다.
+     *
+     * <p>예전에는 {@code TiberoLimitHandler.INSTANCE} 싱글턴을 돌려줬다. 이 핸들러는
+     * {@code processSql} 에서 플래그 세 개를 덮어쓰고, 호출자
+     * ({@code DeferredResultSetAccess})는 SQL 을 만든 뒤 <b>나중에</b> 바인딩 시점에
+     * 그 값을 읽는다. 그 사이 다른 스레드가 같은 인스턴스에 {@code processSql} 을
+     * 부르면 플래그가 뒤집혀 예외 없이 다른 페이지가 나왔다.
+     *
+     * <p>기준 문서도 "Subclasses should be thread-safe and immutable" 을 명시한다.
+     */
     @Test
     public void testDialectReturnsFreshLimitHandlerPerCall() {
         final LimitHandler first = dialect.getLimitHandler();

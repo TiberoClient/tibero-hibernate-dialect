@@ -21,19 +21,9 @@ import static org.junit.Assert.*;
 /**
  * 전체 리뷰 §4 의 코드 결함에 대한 회귀 테스트.
  *
- * <p>다섯 건 모두 <b>기존 테스트가 보지 않던 자리</b>에 있었다. 그래서 고친 것만으로는
- * 부족하고, 같은 모양이 다시 들어오면 실패하도록 여기서 고정한다.
- *
- * <pre>
- * §4.1  extract(epoch from &lt;DATE&gt;)      JDBC-11003
- * §4.2  FROM 절 파생 테이블                  JDBC-8022
- * §4.3  number(p,0) 역매핑                  JDBC-590749 · 7 이 true 로
- * §4.4  페이징+락에서 바깥 order by 유실      조용히 순서 뒤섞임
- *       정렬 없는 페이징+락                  NullPointerException
- * </pre>
- *
- * <p>§4.5(LimitHandler 공유 상태)는 {@code LimitHandlerTest}, §4.6(최소 지원 버전)은
- * {@code DialectDecisionContractTest} 가 각각 지킨다.
+ * <p>다섯 건 모두 기존 테스트가 보지 않던 자리에 있었다. 같은 모양이 다시 들어오면
+ * 실패하도록 고정한다. §4.5 는 {@code LimitHandlerTest}, §4.6 은
+ * {@code DialectDecisionContractTest} 가 맡는다.
  */
 public class ReviewFixRegressionTest extends AbstractTiberoDialectTestBase {
 
@@ -176,18 +166,13 @@ public class ReviewFixRegressionTest extends AbstractTiberoDialectTestBase {
     /**
      * ⚠️ {@code precision != 0} 가드가 조건 <b>바깥</b>에 있어야 한다.
      *
-     * <p>tbjdbc 는 <b>맨 집계</b>의 precision 을 0 으로 보고한다 — {@code avg} · {@code sum} ·
-     * {@code count} 가 전부 {@code precision=0 scale=0} 이다. 가드를 조건 안쪽에 두면
-     * 0 이 {@code precision <= 19} 에 걸려 BIGINT 가 되고, 소수가 예외 없이 깎인다.
+     * <p>tbjdbc 는 맨 집계의 precision 을 0 으로 보고한다({@code avg}/{@code sum}/{@code count}).
+     * 가드를 안쪽에 두면 0 이 {@code <= 19} 에 걸려 BIGINT 가 되고 소수가 깎인다
+     * ({@code avg(v)} 가 3.5 → 3).
      *
-     * <pre>
-     * 가드 바깥(정상)   select avg(v) → 3.5  (BigDecimal)
-     * 가드 안쪽(결함)   select avg(v) → 3    (Long)        ← 0.5 유실
-     * </pre>
-     *
-     * <p>단순히 {@code avg(7)/2} 를 보면 안 된다 — 나눗셈 결과는 precision 을 38 로
-     * 보고해서 이 분기를 타지 않으므로 가드를 잘못 옮겨도 통과한다(실측).
-     * <b>맨 집계이면서 결과가 소수</b>여야 이 결함이 드러난다.
+     * <p>⚠️ {@code avg(7)/2} 로는 검증할 수 없다 — 나눗셈 결과는 precision 을 38 로 보고해
+     * 이 분기를 타지 않으므로 가드를 잘못 옮겨도 통과한다. <b>맨 집계이면서 결과가 소수</b>
+     * 여야 드러난다.
      */
     @Test
     public void aggregatePrecisionZero_keepsDecimalPrecision() {

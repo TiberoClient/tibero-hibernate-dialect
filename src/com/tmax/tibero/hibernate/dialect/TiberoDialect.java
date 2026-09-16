@@ -158,6 +158,14 @@ public class TiberoDialect extends Dialect {
     private final SequenceSupport tiberoSequenceSupport = TiberoSequenceSupport.getInstance(this);
     private final UniqueDelegate uniqueDelegate = new CreateTableUniqueDelegate(this);
 
+    /**
+     * 최소 지원 버전. 재정의하지 않으면 하한이 {@code ZERO_VERSION} 이라 Tibero 4 에 붙여도
+     * {@code checkVersion()} 경고가 없다 — 무인자 생성자의 {@code make(7)} 은 그 경로에만
+     * 적용되고 운영에서 쓰이는 것은 info 생성자 쪽이다.
+     *
+     * <p>⚠️ 7.2 로 잡으면 안 된다. tbjdbc 가 마이너를 유실해 정상적인 7.2.6 서버도
+     * {@code 7.0} 으로 보고되므로 매 기동마다 {@code HHH000511} 오탐이 뜬다.
+     */
     private static final DatabaseVersion MINIMUM_VERSION = DatabaseVersion.make(7);
 
     @Override
@@ -166,6 +174,10 @@ public class TiberoDialect extends Dialect {
     }
 
     public TiberoDialect() {
+        // registerDefaultProperties() 를 여기서 부르지 않는다 — super(DatabaseVersion) 이
+        // initDefaultProperties() 를 부르고 그 재정의가 이미 호출한다. 여기서 또 부르면
+        // 두 번 실행된다. 지금은 멱등이라 무증상이지만 멱등하지 않은 설정이 추가되는
+        // 순간 결함이 된다.
         super(MINIMUM_VERSION);
     }
 
@@ -181,159 +193,13 @@ public class TiberoDialect extends Dialect {
     }
 
     /**
-     * Tibero 고유 예약어를 Hibernate 의 인용 대상 목록에 추가한다.
+     * 다중 키 배치 로딩을 500키씩 나눈다.
      *
-     * <h2>먼저 알아야 할 것 — 이건 옵트인 기능이다</h2>
-     * Hibernate 는 <b>기본적으로 예약어를 인용하지 않는다.</b>
-     * {@code hibernate.auto_quote_keyword} 의 기본값이 {@code false} 다.
+     * <p>Tibero 는 IN 원소 수에 한도가 없어 {@link #getInExpressionCountLimit()} 은 {@code 0}
+     * 으로 두지만, 서버 파스 시간이 원소 수의 <b>제곱</b>으로 는다. 그 값은 문장을 나누지
+     * 않고 {@code or} 로 이어 붙일 뿐이라 효과가 없고, 실제로 쪼개는 것은 이 값이다.
      *
-     * <pre>
-     * 설정 끔(기본)   create table ITEM (size number(10,0), ...)     JDBC-7001
-     * 설정 켬         create table ITEM ("size" number(10,0), ...)   OK
-     * </pre>
-     *
-     * 그래서 이 메서드가 고치는 것은 <b>"예약어 컬럼이 깨진다"가 아니라
-     * "설정을 켜도 Tibero 예약어는 안 잡힌다"</b> 이다. 설정을 끈 상태의 동작은
-     * Oracle 과 같고 Hibernate 가 문서화해 둔 기본값이므로 우리가 바꿀 일이 아니다
-     * (dialect 가 사용자 설정을 임의로 켜서도 안 된다).
-     *
-     * <h2>설정을 켰을 때 무엇이 달라지나</h2>
-     * 설정이 켜지면 Hibernate 는 인용 대상 목록을 두 군데서 모은다 —
-     * <b>드라이버가 보고하는 {@code DatabaseMetaData.getSQLKeywords()}</b> 와
-     * <b>dialect 가 {@link #registerKeyword} 로 등록한 것</b>. tbjdbc 는 34개만
-     * 보고하고 거기에 {@code size} · {@code least} 같은 흔한 이름이 빠져 있다.
-     *
-     * <p>같은 엔티티를 {@code auto_quote_keyword=true} 로 돌린 실측 비교다.
-     *
-     * <pre>
-     * OracleDialect (추가 등록 없음)
-     *   create table QP2 (least ..., "number" ..., size ..., "comment" ...)
-     *                     ^^^^^              ^^^^          ← 안 잡혀서 DDL 실패
-     *
-     * TiberoDialect (아래 71종 등록)
-     *   create table QP2 ("least" ..., "number" ..., "size" ..., "comment" ...)
-     * </pre>
-     *
-     * {@code number} · {@code comment} 는 tbjdbc 목록에 있어 원래도 잡혔고,
-     * {@code size} · {@code least} 가 이 등록으로 새로 잡히는 부분이다.
-     *
-     * <h2>왜 Oracle 대조로는 안 보였나</h2>
-     * {@code OracleDialect} 에도 {@code registerKeywords()} 호출이 없다. 그래서
-     * "Oracle 이 하는데 우리가 안 한 것" 목록에는 절대 잡히지 않는다. 반면
-     * MySQL · SQLServer · DB2 · HSQL · HANA · Sybase · Derby <b>7개 벤더는 자기
-     * 예약어를 등록한다</b> — 벤더 대조를 하고 나서야 여기가 원래 벤더가 채우는
-     * 자리라는 게 드러났다.
-     *
-     * <h2>목록을 어떻게 정했나</h2>
-     * 추측하지 않고 <b>{@code V$RESERVED_WORDS} 전량(1,242개)을 실제로 컬럼명으로
-     * 써 봤다.</b> Hibernate 가 이미 아는 단어를 빼고 식별자 형태인 1,064개에 대해
-     * {@code create table X (<단어> number)} 를 돌린 결과가 아래 71개다.
-     *
-     * <pre>
-     * RESERVED='Y' 인데 실패        58개
-     * RESERVED='N' 인데 실패        13개   ← 카탈로그만 믿었으면 놓쳤을 것들
-     * 인용해도 안 되는 것             0개   ← 전부 큰따옴표로 해결됨
-     * </pre>
-     *
-     * {@code RESERVED='N'} 인데 실패한 13개가 이 방식의 값어치다. Tibero 카탈로그의
-     * {@code RESERVED} 플래그만 믿었다면 {@code least} · {@code flashback} ·
-     * {@code connect_by_root} 같은 단어가 빠졌을 것이다.
-     *
-     * <h2>한계</h2>
-     * <ul>
-     *   <li><b>{@code hibernate.auto_quote_keyword=true} 가 없으면 아무 효과가 없다.</b>
-     *       사용자 문서에 이 설정을 안내해야 한다.</li>
-     *   <li>이 목록은 <b>Tibero 7 ps06 기준</b>이다. 서버 버전이 올라가 예약어가
-     *       늘면 다시 훑어야 한다. {@code capability.ReservedWordDdlTest} 가
-     *       {@code V$RESERVED_WORDS} 를 다시 전수로 돌려 빠진 단어를 알려 준다.</li>
-     *   <li>설정을 안 켜는 쪽을 택했다면 사용자가
-     *       {@code @Column(name = "\"size\"")} 처럼 직접 인용하면 된다.</li>
-     * </ul>
-     *
-     * @see #KEYWORDS 실측으로 확정한 71개
-     */
-    /**
-     * 다중 키 배치 로딩을 <b>500키씩</b> 나눈다.
-     *
-     * <h2>왜 이 값이 필요한가 — IN 한도가 아니라 파스 비용</h2>
-     * Tibero 는 IN 원소 개수에 <b>한도가 없다</b>. 단일 IN 리스트에 바인드를 50,000개
-     * 넣어도 오류 없이 실행된다(ps06 실측). 그래서
-     * {@link #getInExpressionCountLimit()} 은 기본값 {@code 0}(무제한)을 그대로 둔다 —
-     * Oracle 의 1000 은 {@code ORA-01795} 를 피하려는 값이라 우리에겐 해당이 없다.
-     *
-     * <p>문제는 다른 데 있다. <b>서버 파스 시간이 IN 원소 수의 제곱으로 늘어난다.</b>
-     *
-     * <pre>
-     * 바인드 수     최초 실행(파스 포함)     같은 문장 재실행
-     *   1,000            0.16 초                0.8 ms
-     *  10,000           15.6  초                5.4 ms
-     *  30,000          138.6  초               15.3 ms
-     *  50,000          387.6  초               20.2 ms        t(ms) ≈ 1.55e-4 × N²
-     * </pre>
-     *
-     * 파스는 SQL 텍스트당 한 번만 든다(새 커넥션에서도 5.5ms — 서버측 공용 캐시).
-     * 그런데 Hibernate 는 리스트 길이만큼 {@code ?} 를 찍으므로 <b>키가 하나만 달라도
-     * 새 텍스트</b>가 되어 그 비용을 다시 문다.
-     *
-     * <h2>왜 {@code getInExpressionCountLimit} 으로는 못 고치나</h2>
-     * 이름만 보면 그쪽이 맞을 것 같지만 아니다.
-     * {@code AbstractSqlAstTranslator#visitInListPredicate} 는 그 값으로 <b>문장을 나누지
-     * 않고</b>, 한 문장 안에서 {@code ) or x in (} 로 이어 붙인다.
-     *
-     * <pre>
-     * limit = 0      where id in (?,?,… 10000개 …)
-     * limit = 1000   where (id in (?×1000) or id in (?×1000) or … 10벌 …)
-     *                 ↑ 여전히 한 문장, 바인드 총수 동일
-     * </pre>
-     *
-     * 그래서 개선폭이 10,000개 기준 15.4초 → 4.6초(3.3배)에 그친다. 게다가 native query
-     * 경로는 분할조차 하지 않고 {@code HHH000443}("will likely cause failures") 경고만
-     * 찍는데, Tibero 는 실패하지 않으므로 오탐 로그만 쌓인다.
-     *
-     * <h2>이 값은 진짜로 문장을 나눈다</h2>
-     * {@code Dialect.STANDARD_MULTI_KEY_LOAD_SIZING_STRATEGY} 가 이 값으로 배치 크기를
-     * 정하고, {@code byMultipleIds} · {@code @BatchSize} 배치 페치 · 컬렉션 배치 페치 ·
-     * {@code byMultipleNaturalId} 가 <b>실제로 여러 문장</b>으로 쪼갠다.
-     *
-     * <pre>
-     * byMultipleIds 실측 (ps06, StatementInspector 로 문장 수 확인)
-     *
-     *   3,000키  limit=0     select 1개 (? 3,000개)   1,411 ms
-     *   3,000키  limit=1000  select 3개 (? 1,000개)     171 ms
-     * </pre>
-     *
-     * <h2>왜 하필 500인가</h2>
-     * 파스가 제곱이므로 청크를 줄이면 그만큼 싸지지만, 대신 왕복 횟수가 는다. 그 균형점을
-     * 실측했다(10,000키 / 30,000키).
-     *
-     * <pre>
-     * chunk    10,000키    30,000키
-     *   100      76 ms      101 ms     ← 왕복 횟수가 지배
-     *   250      35 ms       65 ms     ← 최소
-     *   500      57 ms       78 ms
-     *   750     115 ms      119 ms
-     *  1000     167 ms      178 ms
-     *     0  15,490 ms   (측정 안 함)
-     * </pre>
-     *
-     * 최솟값은 250 이지만 <b>500</b> 을 골랐다. 위 측정은 <b>localhost</b> 라 왕복 비용이
-     * 사실상 0 이어서 작은 청크에 유리하게 치우쳐 있다. 실제 배포처럼 네트워크 지연이
-     * 있으면 왕복이 늘수록 손해가 커지므로, 250~500 구간에서 <b>왕복이 절반인 쪽</b>이
-     * 안전하다. 두 값의 차이는 어차피 수십 밀리초다.
-     *
-     * <h2>한계</h2>
-     * <ul>
-     *   <li>배치 로딩 경로에만 적용된다. <b>HQL 의 {@code in :list} 는 여전히 한 문장</b>
-     *       이므로 큰 리스트를 넘기면 파스 비용을 그대로 문다. 그쪽은 애플리케이션이
-     *       끊어 보내거나 {@code hibernate.query.in_clause_parameter_padding=true} 로
-     *       텍스트 종류를 줄여야 한다.</li>
-     *   <li>500 은 localhost 측정에 기반한 값이다. 네트워크 지연이 큰 환경에서 배치 로딩이
-     *       느리다면 이 값을 올려 보는 것이 첫 번째 시도다.</li>
-     *   <li>Hibernate 의 {@code SybaseDialect} 도 같은 비대칭을 쓴다 —
-     *       IN 250,000 / 파라미터 2,000. 두 값을 다르게 두는 것이 이상한 조합이 아니다.</li>
-     * </ul>
-     *
-     * @see #getInExpressionCountLimit() 이쪽은 기본값 0 을 유지한다
+     * <p>측정치와 500 을 고른 근거는 {@code docs/dialect-decisions.md} §1.3 참고.
      */
     @Override
     public int getParameterCountLimit() {
@@ -341,34 +207,28 @@ public class TiberoDialect extends Dialect {
     }
 
     /**
-     * {@code drop type if exists} 를 쓴다.
+     * {@code drop type if exists} 를 쓴다 (Oracle 은 이 문법을 못 받아 {@code false}).
      *
-     * <h2>왜 필요한가</h2>
-     * {@code hbm2ddl.auto=create-drop} 은 <b>만들기 전에 먼저 지운다.</b> 첫 실행에는 지울
-     * 타입이 없으므로 {@code drop type X} 가 {@code JDBC-7071} 로 실패한다. 평소에는
-     * Hibernate 가 삼켜 넘어가지만 <b>{@code hbm2ddl.halt_on_error=true} 를 켜면 첫 실행이
-     * 통째로 죽는다.</b>
-     *
-     * <p>그 설정은 DDL 문제를 조사할 때 반드시 켜야 하는 것이다 — {@code @Struct} 성분
-     * check 제약 결함은 그것 없이는 찾지 못했다. 첫 실행에서 죽으면 그 도구를 못 쓴다.
-     *
-     * <pre>
-     * drop type NOPE_T force              FAIL  JDBC-7071
-     * drop type if exists NOPE_T force    OK     (실측)
-     * </pre>
-     *
-     * <p>Oracle 은 이 문법을 못 받아 {@code false} 를 쓴다. {@code drop table if exists} 와
-     * 마찬가지로 <b>Tibero 가 Oracle 보다 나은 지점</b>이다.
-     *
-     * <p>이 값은 원래 {@code false} 였다 — {@code supportsIfExistsBeforeTableName} 은
-     * 실측해서 {@code true} 로 두었는데 타입 쪽은 확인하지 않은 채 Hibernate 기본값을
-     * 그대로 둔 것이었다. {@code @Struct} 배열 작업에서 UDT 를 다루다 드러났다.
+     * <p>{@code false} 면 {@code create-drop} 첫 실행에서 없는 타입을 지우려다
+     * {@code JDBC-7071} 이 난다. 평소엔 Hibernate 가 삼키지만
+     * {@code hbm2ddl.halt_on_error=true} 를 켜면 첫 실행이 통째로 죽는다 —
+     * DDL 문제를 조사할 때 반드시 켜야 하는 설정이라 그대로 두면 안 된다.
      */
     @Override
     public boolean supportsIfExistsBeforeTypeName() {
         return true;
     }
 
+    /**
+     * Tibero 고유 예약어 {@link #KEYWORDS 71종}을 인용 대상 목록에 추가한다.
+     *
+     * <p>⚠️ <b>옵트인이다.</b> {@code hibernate.auto_quote_keyword} 가 꺼져 있으면(기본값)
+     * 인용 자체가 일어나지 않으므로 이 등록도 효과가 없다. 즉 이 메서드가 고치는 것은
+     * "예약어 컬럼이 깨진다" 가 아니라 "설정을 켜도 Tibero 예약어는 안 잡힌다" 이다.
+     *
+     * <p>목록은 {@code V$RESERVED_WORDS} 전량을 컬럼명으로 써 보고 확정했고, 서버 버전이
+     * 올라가 예약어가 늘면 {@code capability.ReservedWordDdlTest} 가 빠진 단어를 알려 준다.
+     */
     @Override
     protected void registerDefaultKeywords() {
         super.registerDefaultKeywords();
@@ -510,6 +370,12 @@ public class TiberoDialect extends Dialect {
         registry.register("trunc", new OracleTruncFunction(typeConfiguration));
         registry.registerAlternateKey("truncate", "trunc");
 
+        // extract(epoch from <DATE>) 대응. EPOCH 패턴의 at time zone 은 타임존 정보를 가진
+        // 값에만 쓸 수 있어 DATE 컬럼이면 JDBC-11003 이 난다. extractPattern 은 인자 타입을
+        // 모르는 자리라 거기서는 분기할 수 없어 함수 자체를 갈아끼운다.
+        //
+        // ⚠️ from_tz 식을 EPOCH 전체에 쓰면 안 된다 — 값이 가진 오프셋을 무시하므로
+        // TIMESTAMP WITH TIME ZONE 이 예외 없이 9시간 틀려진다. 그래서 조건부여야 한다.
         registry.register("extract", new OracleExtractFunction(this, typeConfiguration));
 
         // Tibero: ROWID는 문자열로 취급 (Factory 기본 long 덮어씀)
@@ -532,21 +398,10 @@ public class TiberoDialect extends Dialect {
                 .setInvariantType(basicTypeRegistry.resolve(StandardBasicTypes.STRING))
                 .setUseParenthesesWhenNoArgs(false)
                 .register();
-        // str() 은 일부러 등록하지 않는다.
-        //
-        // 예전에는 여기서 to_char 로 직접 등록했는데, 그러면 형식 문자열이 없는
-        // to_char(x) 가 나가 결과가 세션 NLS 설정에 좌우된다. 같은 질의가 세션마다
-        // 다른 문자열을 돌려주는 셈이라 값 비교·직렬화가 조용히 깨진다.
-        //
-        //   NLS_DATE_FORMAT 기본        str(날짜) → "2024/03/05"
-        //   NLS_DATE_FORMAT='DD/MM/YYYY' str(날짜) → "05/03/2024"   ← 같은 값, 다른 결과
-        //
-        // Hibernate 기본 등록(CastStrEmulation)은 str(x) 를 cast(x as String) 으로
-        // 넘기고, 그쪽은 castPattern() 이 형식을 명시한다 — to_char(x,'YYYY-MM-DD').
-        // 그래서 등록을 지우는 것이 곧 고치는 것이다.
-        //
-        // 형식을 직접 주고 싶으면 to_char(x,'…') 를 쓰면 된다. 그 함수는
-        // functionFactory.toCharNumberDateTimestamp() 가 따로 등록한다.
+        // str() 은 일부러 등록하지 않는다. 여기서 to_char 로 등록하면 형식 문자열이 없는
+        // to_char(x) 가 나가 결과가 세션 NLS 설정에 좌우된다. 기본 등록(CastStrEmulation)이
+        // str(x) 를 cast(x as String) 으로 넘기고 castPattern() 이 형식을 박으므로,
+        // 등록을 지우는 것이 곧 고치는 것이다. 형식을 직접 주려면 to_char(x,'…') 를 쓴다.
 
         // mod/power/atan2 는 super.initializeFunctionRegistry 의 CommonFunctionFactory.math()·trigonometry()
         // 등록(인자 개수·타입 검증 포함, power/atan2 = double)을 그대로 사용함.
@@ -771,11 +626,11 @@ public class TiberoDialect extends Dialect {
     }
 
     /**
-     * 집계(aggregate) 컬럼 지원 — {@code @Struct} 임베더블을 컬럼 하나에 담는 매핑.
+     * 집계 컬럼 지원 — 임베더블을 컬럼 하나에 담는 매핑.
      *
-     * <p>Hibernate 기본값 {@code AggregateSupportImpl} 은 관련 훅에서 전부 예외를 던지므로,
-     * {@code @Struct} 엔티티가 하나라도 있으면 <b>SessionFactory 기동이 실패</b>한다.
-     * STRUCT 계열만 다루는 구현을 돌려준다 — JSON 집계는 6.6.1 범위 밖이다.
+     * <p>Hibernate 기본값 {@code AggregateSupportImpl} 은 관련 훅에서 예외를 던지므로
+     * {@code @Struct} 나 JSON 집계 엔티티가 하나라도 있으면 기동이 실패한다.
+     * {@link TiberoAggregateSupport} 가 STRUCT 계열과 JSON 집계를 모두 다룬다.
      */
     @Override
     public AggregateSupport getAggregateSupport() {
@@ -843,27 +698,14 @@ public class TiberoDialect extends Dialect {
                                              int precision,
                                              int scale,
                                              JdbcTypeRegistry jdbcTypeRegistry) {
-        /**
-         * sqlxml : Types.SQLXML, "xmltype"
-         * json : Types.BLOB, "json"
-         * geometry : Types.GEOMETRY, "geometry"
-         * interval day to second : Types.OTHER, "interval day to second"
-         * array : Types.ARRAY, "SCHEMA.TYPE_NAME"
-         * struct : Types.STRUCT, "SCHEMA.TYPE_NAME"
-         * binary_float : TbTypes.BINARY_FLOAT, "binary_float"
-         * binary_double : TbTypes.BINARY_DOUBLE, "binary_double"
+        /*
+         * 드라이버가 보고하는 타입 코드 / 이름 대응
+         *   sqlxml SQLXML "xmltype"   json BLOB "json"   geometry GEOMETRY "geometry"
+         *   array ARRAY / struct STRUCT 는 "SCHEMA.TYPE_NAME"
+         *   binary_float / binary_double 는 TbTypes 고유 코드
          *
-         * numeric
-         * number -> precision 38 scale 0
-         * integer -> precision 38 scale 0
-         * smallint -> precision 38 scale 0
-         * float -> precision 38 scale 0
-         * 이런 식으로 저장되기 때문에 columnType()에서 지정한 값(1, 3, 5, 10, 19)일 때만 역매핑하고 이외에는 numeric
-         *
-         * but, float(10) -> precision 3 scale 0
-         *
-         * TODO (columnType()/registerColumnTypes(), contributeTypes() 추가 후)
-         * interval year to month : Types.OTHER, "interval year to month"
+         * TODO interval year to month 는 아직 다루지 않는다
+         *      (columnType()/contributeTypes() 보강 후)
          */
         switch ( jdbcTypeCode ) {
             case BLOB :
@@ -901,6 +743,15 @@ public class TiberoDialect extends Dialect {
                 }
                 break;
             case NUMERIC:
+                // DDL 방향(columnType)과 대칭으로 되돌리면 안 된다. DB 쪽 범위가 더 넓다 —
+                // number(1,0) 을 BOOLEAN 으로 보면 7 이 조용히 true 가 되고,
+                // number(3,0)/number(5,0) 을 TINYINT/SMALLINT 로 좁히면 JDBC-590749 가 난다.
+                // Oracle 도 같은 이유로 이 추론을 거부한다.
+                //
+                // ⚠️ precision != 0 가드는 반드시 바깥에 둔다. tbjdbc 는 맨 집계의
+                // precision 을 0 으로 보고하므로(avg/sum/count), 안쪽에 두면 0 이
+                // `<= 19` 에 걸려 BIGINT 가 되고 avg 의 소수가 깎인다.
+                // 나눗셈 결과는 precision 38 이라 이 분기를 안 타므로 검증에 쓸 수 없다.
                 if (scale == 0 && precision != 0) {
                     if (precision <= 10) {
                         return jdbcTypeRegistry.getDescriptor(SqlTypes.INTEGER);
@@ -909,11 +760,7 @@ public class TiberoDialect extends Dialect {
                         return jdbcTypeRegistry.getDescriptor(SqlTypes.BIGINT);
                     }
                 }
-                /**
-                 * TODO
-                 * scale == null 에 해당하는 값일 때 (ex : float(30), number) 처리
-                 * (단, scale == null 일 때 0으로 리턴되는 jdbc 문제 개선 후)
-                 */
+                // precision == 0 이거나 20 이상이면 super 로 흘려보낸다 → NUMERIC
                 break;
         }
         return super.resolveSqlTypeDescriptor(columnTypeName, jdbcTypeCode, precision, scale, jdbcTypeRegistry);
@@ -1351,6 +1198,8 @@ public class TiberoDialect extends Dialect {
 
     @Override
     public LimitHandler getLimitHandler() {
+        // 호출마다 새 인스턴스. processSql 이 플래그를 덮어쓰고 호출자가 나중에 읽으므로,
+        // 공유하면 동시 실행 시 다른 페이지가 나온다(기준 문서도 immutable 을 요구).
         return new TiberoLimitHandler();
     }
 

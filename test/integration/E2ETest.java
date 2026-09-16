@@ -184,7 +184,9 @@ public class E2ETest extends AbstractTiberoDialectTestBase {
             assertResolvedDefaultSqlType(d, jreg, meta.cols[4], SqlTypes.DOUBLE);
 
 
-            // number(p,0) => reverse mapping to integer family
+            // number(p,0) => reverse mapping to integer family.
+            // TINYINT/SMALLINT/BOOLEAN 으로는 좁히지 않는다 — DB 쪽 범위가 더 넓어
+            // number(1,0) 의 7 이 true 가 되고 number(3,0)/number(5,0) 은 JDBC-590749 가 난다.
             assertResolvedDefaultSqlType(d, jreg, meta.cols[5], SqlTypes.INTEGER);
             assertResolvedDefaultSqlType(d, jreg, meta.cols[6], SqlTypes.INTEGER);
             assertResolvedDefaultSqlType(d, jreg, meta.cols[7], SqlTypes.INTEGER);

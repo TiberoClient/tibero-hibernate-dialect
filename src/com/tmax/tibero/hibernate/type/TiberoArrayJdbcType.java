@@ -30,36 +30,6 @@ import static org.hibernate.type.SqlTypes.ARRAY;
 
 /**
  * 배열 필드({@code String[]} · {@code Integer[]} …)를 Tibero 의 <b>VARRAY 컬럼</b>에 넣고 뺀다.
- *
- * <h2>이 클래스가 없을 때의 동작</h2>
- * {@code getPreferredSqlTypeCodeForArray()} 가 기본값이면 배열은 {@code VARBINARY} 로
- * 직렬화되어 하나의 이진 덩어리로 저장된다. 왕복은 되지만 <b>DB 에서 배열로 다룰 수 없다</b> —
- * {@code table()} 언네스트도, {@code array_*} 함수도 쓸 수 없다.
- *
- * <h2>Hibernate 제네릭 구현에서 세 곳을 덮어쓴다</h2>
- * 부모 {@link ArrayJdbcType} 은 표준 {@link java.sql.Connection#createArrayOf} 만 쓰는
- * 드라이버 중립 구현이다. tbjdbc 가 표준과 다르게 구는 세 지점만 손본다.
- *
- * <table>
- *   <caption>tbjdbc 실측</caption>
- *   <tr><th>지점</th><th>제네릭 구현</th><th>tbjdbc</th></tr>
- *   <tr><td>{@code createArrayOf} 의 타입명</td>
- *       <td>요소 DDL 타입명 (JDBC 규약)</td>
- *       <td><b>VARRAY 타입명, 대문자</b>. 그 외는 {@code JDBC-90664}</td></tr>
- *   <tr><td>null 바인딩</td>
- *       <td>{@code setNull(i, ARRAY)}</td>
- *       <td><b>타입명 필요</b>. 없으면 {@code JDBC-590703}</td></tr>
- *   <tr><td>빈 배열 읽기</td>
- *       <td>{@code Array.getArray()} 가 길이 0 배열</td>
- *       <td><b>{@code null} 을 돌려줌</b> → 부모가 NPE</td></tr>
- * </table>
- *
- * <p>Oracle 도 같은 이유로 파생 클래스({@code OracleArrayJdbcType})를 두지만, 그쪽은
- * {@code OracleConnection.createOracleArray} 를 쓰려고 드라이버 클래스를 직접 참조한다.
- * Tibero 는 <b>표준 {@code createArrayOf} 로 충분</b>하므로 드라이버 의존이 없다.
- *
- * @see TiberoArrayJdbcTypeConstructor 임베더블마다 이 타입을 만들어 주는 팩토리
- * @see com.tmax.tibero.hibernate.tool.schema.internal.TiberoUserDefinedTypeExporter VARRAY DDL 을 내는 쪽
  */
 public class TiberoArrayJdbcType extends ArrayJdbcType implements SqlTypedJdbcType {
 
@@ -185,7 +155,10 @@ public class TiberoArrayJdbcType extends ArrayJdbcType implements SqlTypedJdbcTy
             JavaType<?> javaType, Size columnSize, Database database, TypeConfiguration typeConfiguration) {
         final JdbcType elementJdbcType = getElementJdbcType();
         if (elementJdbcType instanceof StructJdbcType) {
-            // @Struct 배열은 AggregateSupport 가 UDT 를 등록한다 (§5.2 P3 미지원 범위)
+            // @Struct 배열(STRUCT_ARRAY)은 여기서 등록하지 않는다 — 이 시점에는 요소 object
+            // 타입의 이름을 알 수 없다. 그 이름은 집계 매핑을 다 읽어야 정해지므로
+            // TiberoAggregateSupport.aggregateAuxiliaryDatabaseObjects 가 등록한다.
+            // Oracle 도 같은 구조다(OracleArrayJdbcType 에 같은 취지의 주석이 있다).
             return;
         }
         final Dialect dialect = database.getDialect();
