@@ -3,11 +3,11 @@ plugins {
 }
 
 group = 'com.tmax.tibero'
-version = '1.0-SNAPSHOT'
+version = '6.6.1'
 
-java {
-    sourceCompatibility = JavaVersion.VERSION_11
-    targetCompatibility = JavaVersion.VERSION_11
+// Hibernate ORM 6.6 의 최소 지원 JDK 가 11. --release 는 -target 과 달리 클래스 라이브러리까지 묶는다.
+tasks.withType(JavaCompile).configureEach {
+    options.release = 11
 }
 
 repositories {
@@ -20,13 +20,7 @@ sourceSets {
         java {
             srcDirs = ['src']
         }
-        // META-INF/services 를 jar 에 넣기 위해 필요하다. 이 선언이 없으면 Gradle 기본값
-        // src/main/resources 를 보는데 그 디렉터리가 없어서 서비스 파일이 통째로 빠지고,
-        // DialectResolver 자동 인식이 클래스만 남은 채 조용히 죽는다.
-        //
-        // srcDirs 를 '.' 로 두면 안 된다 — 저장소 루트의
-        // META-INF/services/org.jboss.logging.LoggerProvider 는 hibernate-testing 전용이라
-        // 배포 jar 에 섞이면 운영 로깅이 깨진다.
+        // META-INF/services 를 jar 에 넣는다. '.' 로 두면 hibernate-testing 전용 파일이 섞인다.
         resources {
             srcDirs = ['resources']
         }
@@ -41,6 +35,21 @@ sourceSets {
     }
 }
 
+// 받은 JAR 의 정체를 파일명 말고도 확인할 수 있게 MANIFEST 에 버전과 호환 대상을 적는다.
+tasks.jar {
+    manifest {
+        attributes(
+            'Implementation-Title'  : 'Tibero Hibernate Dialect',
+            'Implementation-Version': project.version,
+            'Implementation-Vendor' : 'TmaxTibero',
+            'Built-For-Hibernate'   : '6.6.56.Final',
+            'Built-For-Tibero'      : '7.2.6 이상',
+            'Built-For-Java'        : '11 이상',
+            'Automatic-Module-Name' : 'com.tmax.tibero.hibernate.dialect'
+        )
+    }
+}
+
 tasks.test {
     exclude '**/AbstractTiberoDialectTestBase.class'
 }
@@ -49,7 +58,7 @@ dependencies {
     // Hibernate
     implementation 'org.hibernate.orm:hibernate-core:6.6.56.Final'
 
-    // Tibero JDBC 드라이버 (로컬 JAR) - 아래에 Tibero JDBC JAR 파일의 절대 경로를 입력하세요.
+    // Tibero JDBC 드라이버 — 각자 쓰는 드라이버의 절대 경로로 교체.
     implementation files('Tibero_JDBC_JAR_절대경로')
 
     // 테스트

@@ -15,6 +15,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Locale;
+import java.util.stream.Collectors;
 
 import static org.junit.Assert.*;
 
@@ -209,7 +210,7 @@ public class ReviewFixRegressionTest extends AbstractTiberoDialectTestBase {
 
         assertEquals(3, rows.size());
         assertEquals(List.of("n80", "n81", "n82"),
-                rows.stream().map(r -> r.name).toList());
+                rows.stream().map(r -> r.name).collect(Collectors.toList()));
 
         final String sql = SqlCaptureInspector.getSqls().stream()
                 .filter(q -> q.toLowerCase(Locale.ROOT).contains("for update"))

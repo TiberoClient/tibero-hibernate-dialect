@@ -14,6 +14,7 @@ import support.SqlCaptureInspector;
 
 import java.lang.reflect.Method;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import static org.junit.Assert.*;
 
@@ -228,7 +229,8 @@ public class FetchClauseTypeTest extends AbstractTiberoDialectTestBase {
         final List<Long> ids = inTransactionReturning(s -> s.createNativeQuery(
                 "select id from (select id, rank() over (order by score) rk from FCT_ITEM) "
                         + "where rk <= 1 order by id", Object.class)
-                .getResultList().stream().map(o -> ((Number) o).longValue()).toList());
+                .getResultList().stream().map(o -> ((Number) o).longValue())
+                        .collect(Collectors.toList()));
 
         assertEquals("동점인 두 건이 함께 나와야 함 — 이것이 with ties 의 의미",
                 List.of(1L, 2L), ids);
