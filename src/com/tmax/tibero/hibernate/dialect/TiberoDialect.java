@@ -60,6 +60,7 @@ import java.time.temporal.ChronoField;
 import static org.hibernate.type.descriptor.DateTimeUtils.appendAsTimestampWithNanos;
 import org.hibernate.dialect.function.CommonFunctionFactory;
 import org.hibernate.dialect.function.ModeStatsModeEmulation;
+import org.hibernate.dialect.function.OracleExtractFunction;
 import org.hibernate.dialect.function.OracleTruncFunction;
 import org.hibernate.dialect.function.StandardSQLFunction;
 import org.hibernate.dialect.identity.IdentityColumnSupport;
@@ -502,6 +503,8 @@ public class TiberoDialect extends Dialect {
         registry.register("mode", new ModeStatsModeEmulation(typeConfiguration));
         registry.register("trunc", new OracleTruncFunction(typeConfiguration));
         registry.registerAlternateKey("truncate", "trunc");
+
+        registry.register("extract", new OracleExtractFunction(this, typeConfiguration));
 
         // Tibero: ROWID는 문자열로 취급 (Factory 기본 long 덮어씀)
         registry.noArgsBuilder("rowid")
