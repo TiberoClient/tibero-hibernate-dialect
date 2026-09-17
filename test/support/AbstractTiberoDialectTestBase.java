@@ -40,8 +40,12 @@ public class AbstractTiberoDialectTestBase extends BaseCoreFunctionalTestCase {
     }
 
     /**
-     * cleanup drop이 lock release 지연 때문에 실패할 수 있으므로 retry 적용
-     * 또한, 각 테스트 setup (테이블 생성 및 데이터 insert) 때 table drop 시도 시 제대로 동작하지 않을 가능성이 있음
+     * cleanup drop 이 lock release 지연 때문에 실패할 수 있으므로 retry 를 건다.
+     * 테스트 setup 에서 이전 테이블을 지울 때도 같은 이유로 한 번에 안 될 수 있다.
+     *
+     * <p>테이블이 없어서 나는 실패는 정상이므로 끝까지 실패해도 예외를 던지지 않는다.
+     * 다만 <b>조용히 넘어가지는 않는다</b> — 지워지지 않은 채 다음 테스트가 돌면
+     * 원인이 엉뚱한 곳에서 드러나므로, 마지막 실패는 이유와 함께 남긴다.
      */
     protected void dropTableWithRetry(String table) {
         final int maxRetry = 5;
@@ -56,6 +60,13 @@ public class AbstractTiberoDialectTestBase extends BaseCoreFunctionalTestCase {
             } catch (Exception e) {
 
                 if (i == maxRetry) {
+                    Throwable root = e;
+                    while (root.getCause() != null) {
+                        root = root.getCause();
+                    }
+                    System.err.println("[dropTableWithRetry] " + table + " 를 " + maxRetry
+                            + "회 시도 후에도 지우지 못했다 — " + root.getClass().getSimpleName()
+                            + ": " + String.valueOf(root.getMessage()).split("\n")[0]);
                     return;
                 }
 
